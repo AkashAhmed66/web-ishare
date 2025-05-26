@@ -1,25 +1,38 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router } from 'react-router-dom';
+import { Provider } from 'react-redux';
+import { store } from './redux/store';
+import AppRoutes from './navigation/AppRoutes';
+import { API_URL } from './config/apiConfig';
+import * as LocalStorage from './utils/localStorage';
 
 function App() {
+  // Log initialization
+  useEffect(() => {
+    console.log('===== IShare Web App Initializing =====');
+    console.log('API URL:', API_URL);
+    
+    // Test localStorage availability
+    const checkStorage = async () => {
+      const isAvailable = LocalStorage.testLocalStorage();
+      console.log(`LocalStorage available: ${isAvailable}`);
+      
+      if (!isAvailable) {
+        console.warn('LocalStorage is not available. The app may not function correctly.');
+      }
+    };
+    
+    checkStorage();
+  }, []);
+  
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <Provider store={store}>
+      <Router>
+        <div className="app-container">
+          <AppRoutes />
     </div>
+      </Router>
+    </Provider>
   );
 }
 
