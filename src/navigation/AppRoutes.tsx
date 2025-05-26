@@ -11,6 +11,8 @@ import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/ResetPasswordScreen';
+import TermsScreen from '../screens/TermsScreen';
+import PrivacyScreen from '../screens/PrivacyScreen';
 
 // Import main screens
 import HomeScreen from '../screens/HomeScreen';
@@ -88,6 +90,19 @@ const AppRoutes: React.FC = () => {
             <ResetPasswordScreen />
           </AuthLayout>
         </PublicRoute>
+      } />
+      
+      {/* Public informational pages */}
+      <Route path="/terms" element={
+        <AuthLayout>
+          <TermsScreen />
+        </AuthLayout>
+      } />
+      
+      <Route path="/privacy" element={
+        <AuthLayout>
+          <PrivacyScreen />
+        </AuthLayout>
       } />
 
       {/* Protected routes (main app) */}

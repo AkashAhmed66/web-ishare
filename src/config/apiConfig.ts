@@ -34,6 +34,7 @@ export const API_ENDPOINTS = {
   RECURRING_RIDES: '/api/rides/recurring',
   
   // Drivers
+  DRIVER_REGISTER: '/api/drivers/register',
   NEARBY_DRIVERS: '/api/drivers/nearby',
   DRIVER_LOCATION: '/api/drivers/location',
   DRIVER_STATUS: '/api/drivers/status',

@@ -87,34 +87,38 @@ export const apiService = {
     });
   },
   
-  post: <T>(url: string, data?: any): Promise<T> => {
+  post: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> => {
     return apiRequest<T>({
       method: 'POST',
       url,
       data,
+      ...config,
     });
   },
   
-  put: <T>(url: string, data?: any): Promise<T> => {
+  put: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> => {
     return apiRequest<T>({
       method: 'PUT',
       url,
       data,
+      ...config,
     });
   },
   
-  patch: <T>(url: string, data?: any): Promise<T> => {
+  patch: <T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> => {
     return apiRequest<T>({
       method: 'PATCH',
       url,
       data,
+      ...config,
     });
   },
   
-  delete: <T>(url: string): Promise<T> => {
+  delete: <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
     return apiRequest<T>({
       method: 'DELETE',
       url,
+      ...config,
     });
   },
 };

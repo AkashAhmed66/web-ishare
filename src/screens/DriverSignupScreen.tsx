@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../redux/store';
 import { useNavigate } from 'react-router-dom';
 import { COLORS, STYLES } from '../styles/theme';
+import driverService, { DriverRegistrationData } from '../services/driverService';
+import { setUser } from '../redux/slices/authSlice';
 
 const DriverSignupScreen: React.FC = () => {
   const navigate = useNavigate();
@@ -9,6 +11,7 @@ const DriverSignupScreen: React.FC = () => {
   const { user, loading } = useAppSelector((state) => state.auth);
 
   const [currentStep, setCurrentStep] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     // Personal Information
     firstName: '',
@@ -17,6 +20,8 @@ const DriverSignupScreen: React.FC = () => {
     email: '',
     dateOfBirth: '',
     address: '',
+    licenseNumber: '',
+    licenseExpiryDate: '',
     
     // Vehicle Information
     vehicleType: '',
@@ -85,16 +90,82 @@ const DriverSignupScreen: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
-      // Here you would submit the driver application
-      console.log('Submitting driver application:', formData);
+      setIsSubmitting(true);
       
-      // Simulate API call
-      setTimeout(() => {
-        alert('Driver application submitted successfully! You will be notified once your application is reviewed.');
-        navigate('/');
-      }, 2000);
-    } catch (error) {
+      // Validate required fields
+      if (!formData.licenseNumber || !formData.licenseExpiryDate || 
+          !formData.vehicleMake || !formData.vehicleModel || 
+          !formData.vehicleYear || !formData.vehicleColor || 
+          !formData.licensePlate) {
+        alert('Please fill in all required fields');
+        return;
+      }
+
+      // Validate license expiry date
+      const licenseExpiry = new Date(formData.licenseExpiryDate);
+      const today = new Date();
+      if (licenseExpiry <= today) {
+        alert('Driver license has expired or expires today. Please provide a valid license.');
+        return;
+      }
+
+      // Validate vehicle year
+      const currentYear = new Date().getFullYear();
+      const vehicleYear = parseInt(formData.vehicleYear);
+      if (vehicleYear < 2010 || vehicleYear > currentYear) {
+        alert('Vehicle must be from 2010 or newer.');
+        return;
+      }
+
+      // Validate agreements
+      if (!formData.agreedToTerms || !formData.agreedToBackground) {
+        alert('Please agree to the terms of service and background check to continue.');
+        return;
+      }
+
+      // Prepare data for API
+      const driverData: DriverRegistrationData = {
+        licenseNumber: formData.licenseNumber,
+        licenseExpiryDate: formData.licenseExpiryDate,
+        vehicleDetails: {
+          type: formData.vehicleType,
+          make: formData.vehicleMake,
+          model: formData.vehicleModel,
+          year: parseInt(formData.vehicleYear),
+          color: formData.vehicleColor,
+          licensePlate: formData.licensePlate
+        },
+        documents: {
+          driverLicense: formData.driverLicense ? 'uploaded' : undefined,
+          vehicleRegistration: formData.vehicleRegistration ? 'uploaded' : undefined,
+          insurance: formData.insurance ? 'uploaded' : undefined,
+          profilePhoto: formData.profilePhoto ? 'uploaded' : undefined
+        },
+        bankingInfo: {
+          accountNumber: formData.bankAccount,
+          routingNumber: formData.routingNumber,
+          taxId: formData.taxId
+        }
+      };
+
+      console.log('Submitting driver application:', driverData);
+      
+      // Call the API
+      const response = await driverService.registerDriver(driverData);
+      
+      // Update user state in Redux with the updated user data
+      if (response.user) {
+        dispatch(setUser(response.user));
+      }
+      
+      alert('Driver registration successful! Your application is under review.');
+      navigate('/');
+    } catch (error: any) {
       console.error('Failed to submit application:', error);
+      const errorMessage = error?.response?.data?.message || 'Failed to submit driver application. Please try again.';
+      alert(errorMessage);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -227,6 +298,32 @@ const DriverSignupScreen: React.FC = () => {
           />
         </div>
         <div></div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div>
+          <label style={{ fontSize: '0.9rem', color: COLORS.textSecondary, marginBottom: '0.5rem', display: 'block' }}>
+            Driver's License Number *
+          </label>
+          <input
+            type="text"
+            value={formData.licenseNumber}
+            onChange={(e) => handleInputChange('licenseNumber', e.target.value)}
+            style={STYLES.input}
+            placeholder="Enter license number"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '0.9rem', color: COLORS.textSecondary, marginBottom: '0.5rem', display: 'block' }}>
+            License Expiry Date *
+          </label>
+          <input
+            type="date"
+            value={formData.licenseExpiryDate}
+            onChange={(e) => handleInputChange('licenseExpiryDate', e.target.value)}
+            style={STYLES.input}
+          />
+        </div>
       </div>
 
       <div>
@@ -570,7 +667,9 @@ const DriverSignupScreen: React.FC = () => {
           <p style={{ fontSize: '0.8rem', color: COLORS.textSecondary, margin: 0 }}>
             {formData.firstName} {formData.lastName}<br />
             {formData.phone}<br />
-            {formData.email}
+            {formData.email}<br />
+            License: {formData.licenseNumber}<br />
+            Expires: {formData.licenseExpiryDate}
           </p>
         </div>
 
@@ -721,14 +820,14 @@ const DriverSignupScreen: React.FC = () => {
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={loading || !formData.agreedToTerms || !formData.agreedToBackground}
+              disabled={isSubmitting || !formData.agreedToTerms || !formData.agreedToBackground}
               style={{
                 ...STYLES.buttonPrimary,
-                opacity: (!formData.agreedToTerms || !formData.agreedToBackground) ? 0.5 : 1,
-                cursor: (!formData.agreedToTerms || !formData.agreedToBackground) ? 'not-allowed' : 'pointer'
+                opacity: (isSubmitting || !formData.agreedToTerms || !formData.agreedToBackground) ? 0.5 : 1,
+                cursor: (isSubmitting || !formData.agreedToTerms || !formData.agreedToBackground) ? 'not-allowed' : 'pointer'
               }}
             >
-              {loading ? '🔄 Submitting...' : '🚀 Submit Application'}
+              {isSubmitting ? '🔄 Submitting...' : '🚀 Submit Application'}
             </button>
           )}
         </div>
