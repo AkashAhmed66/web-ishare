@@ -108,7 +108,7 @@ class SocketService {
   }
 
   // Add event listener
-  on<T>(event: SocketEvent, callback: (data: T) => void): () => void {
+  on<T>(event: SocketEvent | string, callback: (data: T) => void): () => void {
     if (!this.socket) {
       throw new Error('Socket is not connected');
     }
@@ -129,7 +129,7 @@ class SocketService {
   }
 
   // Remove event listener
-  off(event: SocketEvent, callback: (data: any) => void): void {
+  off(event: SocketEvent | string, callback: (data: any) => void): void {
     if (!this.socket) return;
 
     this.socket.off(event, callback);
@@ -144,7 +144,7 @@ class SocketService {
   }
 
   // Emit event
-  emit<T>(event: SocketEvent, data: T): void {
+  emit<T>(event: SocketEvent | string, data: T): void {
     if (!this.socket || !this.socket.connected) {
       console.error('Cannot emit event: socket not connected');
       return;
@@ -166,6 +166,81 @@ class SocketService {
     this.emit(SocketEvent.RIDER_LOCATION, {
       ...location,
       timestamp: Date.now(),
+    });
+  }
+
+  // Request a ride
+  requestRide(rideDetails: {
+    userId: string;
+    pickupLocation: Location;
+    dropoffLocation: Location;
+    rideType: string;
+    paymentMethod: string;
+    estimatedPrice: number;
+  }): void {
+    if (!this.socket || !this.socket.connected) {
+      console.error('Cannot request ride: socket not connected');
+      return;
+    }
+
+    this.socket.emit('ride_request', rideDetails);
+  }
+
+  // Accept ride (for drivers)
+  acceptRide(rideId: string, driverId: string): void {
+    if (!this.socket || !this.socket.connected) {
+      console.error('Cannot accept ride: socket not connected');
+      return;
+    }
+
+    this.socket.emit('driver_accepted', { rideId, driverId });
+  }
+
+  // Start ride (for drivers)
+  startRide(rideId: string, driverId: string): void {
+    if (!this.socket || !this.socket.connected) {
+      console.error('Cannot start ride: socket not connected');
+      return;
+    }
+
+    this.socket.emit('ride_started', { rideId, driverId });
+  }
+
+  // Complete ride (for drivers)
+  completeRide(rideId: string, driverId: string): void {
+    if (!this.socket || !this.socket.connected) {
+      console.error('Cannot complete ride: socket not connected');
+      return;
+    }
+
+    this.socket.emit('ride_completed', { rideId, driverId });
+  }
+
+  // Cancel ride
+  cancelRide(rideId: string, reason?: string): void {
+    if (!this.socket || !this.socket.connected) {
+      console.error('Cannot cancel ride: socket not connected');
+      return;
+    }
+
+    // Get user ID from localStorage or auth state
+    const token = localStorage.getItem('auth_token');
+    const userStr = localStorage.getItem('auth_user');
+    let userId = null;
+    
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        userId = user.id;
+      } catch (e) {
+        console.error('Error parsing user data');
+      }
+    }
+
+    this.socket.emit('cancel_ride', { 
+      rideId, 
+      userId,
+      reason: reason || 'Cancelled by user'
     });
   }
 

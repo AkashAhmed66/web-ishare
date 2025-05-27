@@ -34,6 +34,41 @@ import HotZonesScreen from '../screens/HotZonesScreen';
 import DriverSignupScreen from '../screens/DriverSignupScreen';
 import DriverHomeScreen from '../screens/DriverHomeScreen';
 
+// Loading component for auth initialization
+const AuthLoadingScreen: React.FC = () => {
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center',
+      height: '100vh',
+      backgroundColor: '#f8f9fa',
+      fontFamily: 'Arial, sans-serif'
+    }}>
+      <div style={{
+        width: '40px',
+        height: '40px',
+        border: '4px solid #e3e3e3',
+        borderTop: '4px solid #007bff',
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        marginBottom: '20px'
+      }} />
+      <h3 style={{ margin: 0, color: '#6c757d' }}>Loading IShare...</h3>
+      <p style={{ margin: '10px 0 0 0', color: '#adb5bd', fontSize: '14px' }}>
+        Initializing your session
+      </p>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
+};
+
 // Protected route component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated } = useAppSelector((state) => state.auth);
@@ -57,6 +92,13 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const AppRoutes: React.FC = () => {
+  const { initialized, loading } = useAppSelector((state) => state.auth);
+  
+  // Show loading screen while auth is being initialized
+  if (!initialized && loading) {
+    return <AuthLoadingScreen />;
+  }
+
   return (
     <Routes>
       {/* Public routes (authentication screens) */}

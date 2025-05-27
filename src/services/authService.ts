@@ -9,7 +9,7 @@ export interface User {
   firstName?: string;
   lastName?: string;
   phone?: string;
-  role: 'rider' | 'driver' | 'admin';
+  role: 'user' | 'rider' | 'driver' | 'admin';
   profilePicture?: string;
   createdAt: string;
   updatedAt: string;
@@ -21,7 +21,7 @@ export interface RegisterData {
   email: string;
   password: string;
   phone?: string;
-  role?: 'rider' | 'driver';
+  role?: 'user' | 'rider' | 'driver';
 }
 
 // Login data interface
@@ -42,6 +42,11 @@ const isAuthenticated = (): boolean => {
   return !!localStorage.getItem('auth_token');
 };
 
+// Get stored auth token
+const getStoredToken = (): string | null => {
+  return localStorage.getItem('auth_token');
+};
+
 // Get stored user
 const getStoredUser = (): User | null => {
   const userJson = localStorage.getItem('user');
@@ -56,17 +61,48 @@ const getStoredUser = (): User | null => {
   return null;
 };
 
+// Initialize from stored data
+const initializeFromStorage = (): { user: User | null; token: string | null } => {
+  const token = getStoredToken();
+  const user = getStoredUser();
+  
+  // Validate that both token and user exist together
+  if (token && user) {
+    console.log('Auth data found in storage:', { user: user.email, hasToken: !!token });
+    return { user, token };
+  } else if (token || user) {
+    // Inconsistent state - clear everything
+    console.warn('Inconsistent auth state detected, clearing storage');
+    clearStoredAuth();
+    return { user: null, token: null };
+  }
+  
+  return { user: null, token: null };
+};
+
+// Clear stored auth data
+const clearStoredAuth = (): void => {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('refresh_token');
+  localStorage.removeItem('user');
+};
+
+// Store auth data
+const storeAuthData = (user: User, token: string, refreshToken?: string): void => {
+  localStorage.setItem('auth_token', token);
+  if (refreshToken) {
+    localStorage.setItem('refresh_token', refreshToken);
+  }
+  localStorage.setItem('user', JSON.stringify(user));
+};
+
 // Register new user
 const register = async (data: RegisterData): Promise<User> => {
   try {
     const response = await apiService.post<AuthResponse>(API_ENDPOINTS.REGISTER, data);
     
     // Store auth data
-    localStorage.setItem('auth_token', response.token);
-    if (response.refreshToken) {
-      localStorage.setItem('refresh_token', response.refreshToken);
-    }
-    localStorage.setItem('user', JSON.stringify(response.user));
+    storeAuthData(response.user, response.token, response.refreshToken);
     
     return response.user;
   } catch (error) {
@@ -81,11 +117,7 @@ const login = async (data: LoginData): Promise<User> => {
     const response = await apiService.post<AuthResponse>(API_ENDPOINTS.LOGIN, data);
     
     // Store auth data
-    localStorage.setItem('auth_token', response.token);
-    if (response.refreshToken) {
-      localStorage.setItem('refresh_token', response.refreshToken);
-    }
-    localStorage.setItem('user', JSON.stringify(response.user));
+    storeAuthData(response.user, response.token, response.refreshToken);
     
     return response.user;
   } catch (error) {
@@ -105,9 +137,7 @@ const logout = async (): Promise<void> => {
     console.error('Logout API call failed:', error);
   } finally {
     // Clear local storage
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user');
+    clearStoredAuth();
   }
 };
 
@@ -122,6 +152,14 @@ const getCurrentUser = async (): Promise<User> => {
     return response;
   } catch (error) {
     console.error('Failed to get current user:', error);
+    // Clear auth data if user fetch fails (likely token expired)
+    if (error && typeof error === 'object' && 'response' in error) {
+      const apiError = error as any;
+      if (apiError.response?.status === 401) {
+        console.log('Auth token expired, clearing stored data');
+        clearStoredAuth();
+      }
+    }
     throw error;
   }
 };
@@ -163,6 +201,9 @@ const verifyEmail = async (token: string): Promise<void> => {
 export const authService = {
   isAuthenticated,
   getStoredUser,
+  getStoredToken,
+  initializeFromStorage,
+  clearStoredAuth,
   register,
   login,
   logout,

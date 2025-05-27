@@ -159,7 +159,7 @@ const DriverSignupScreen: React.FC = () => {
       }
       
       alert('Driver registration successful! Your application is under review.');
-      navigate('/');
+        navigate('/');
     } catch (error: any) {
       console.error('Failed to submit application:', error);
       const errorMessage = error?.response?.data?.message || 'Failed to submit driver application. Please try again.';

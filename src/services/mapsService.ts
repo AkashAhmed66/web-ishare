@@ -71,7 +71,7 @@ const buildApiUrl = (endpoint: string, params: Record<string, string>) => {
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
   
-  // Base GoMaps API URL
+  // Base Google Maps API URL
   const apiUrl = `https://maps.gomaps.pro/maps/api/${endpoint}?${queryString}`;
   
   // Use proxy if specified, otherwise use direct URL
