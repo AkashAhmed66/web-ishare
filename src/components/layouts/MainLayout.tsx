@@ -12,68 +12,12 @@ const HistoryIcon = () => <span>📜</span>;
 const ProfileIcon = () => <span>👤</span>;
 const NotificationIcon = () => <span>🔔</span>;
 const SettingsIcon = () => <span>⚙️</span>;
+const DriverIcon = () => <span>🚗</span>;
 const LogoutIcon = () => <span>🚪</span>;
 const MenuIcon = () => <span>☰</span>;
 
 // Create a CSS file for MainLayout - this would typically be in a separate file
 const styles = `
-.sidebar {
-  width: 250px;
-  background-color: ${COLORS.card};
-  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-  padding: 1rem 0;
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: -250px;
-  transition: left 0.3s ease;
-  z-index: 1000;
-}
-
-.sidebar.open {
-  left: 0;
-}
-
-@media (min-width: 768px) {
-  .sidebar {
-    left: 0;
-    position: sticky;
-  }
-}
-
-.main-content {
-  flex: 1;
-  margin-left: 0;
-  transition: margin-left 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-@media (min-width: 768px) {
-  .main-content {
-    margin-left: 250px;
-  }
-}
-
-.menu-button {
-  background-color: transparent;
-  border: none;
-  color: white;
-  cursor: pointer;
-  font-size: 1.5rem;
-  display: flex;
-  align-items: center;
-}
-
-@media (min-width: 768px) {
-  .menu-button {
-    display: none;
-  }
-}
-
 .overlay {
   position: fixed;
   top: 0;
@@ -97,13 +41,24 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 768);
   const location = useLocation();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const { unreadCount } = useAppSelector((state) => state.notification);
 
-  // Add the styles to the document
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Add minimal styles to the document (only overlay)
   useEffect(() => {
     const styleElement = document.createElement('style');
     styleElement.textContent = styles;
@@ -139,6 +94,43 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return '?';
   };
 
+  // Sidebar styles
+  const sidebarStyles = {
+    width: '250px',
+    backgroundColor: COLORS.card,
+    boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+    padding: '1rem 0',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    position: isDesktop ? 'fixed' as const : 'fixed' as const,
+    top: 0,
+    bottom: 0,
+    left: isDesktop ? 0 : (isSidebarOpen ? 0 : -250),
+    transition: 'left 0.3s ease',
+    zIndex: 1000,
+  };
+
+  // Main content styles
+  const mainContentStyles = {
+    flex: 1,
+    marginLeft: isDesktop ? 250 : 0,
+    transition: 'margin-left 0.3s ease',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    minHeight: '100vh',
+  };
+
+  // Menu button styles
+  const menuButtonStyles = {
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: 'white',
+    cursor: 'pointer',
+    fontSize: '1.5rem',
+    display: isDesktop ? 'none' : 'flex',
+    alignItems: 'center',
+  };
+
   return (
     <div
       style={{
@@ -147,8 +139,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         backgroundColor: COLORS.background,
       }}
     >
-      {/* Sidebar - Desktop */}
-      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
+      {/* Sidebar */}
+      <aside style={sidebarStyles}>
         <div style={{ padding: '0 1rem 1rem', borderBottom: `1px solid ${COLORS.border}` }}>
           <h1 style={{ fontSize: '1.5rem', margin: '0 0 1rem' }}>IShare</h1>
           {user && (
@@ -216,6 +208,26 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 <span style={{ marginLeft: '0.75rem' }}>Map</span>
               </Link>
             </li>
+            {user?.role === 'driver' && (
+              <li>
+                <Link
+                  to="/driver"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0.75rem 1rem',
+                    textDecoration: 'none',
+                    color: isActive('/driver') ? COLORS.primary : COLORS.text,
+                    backgroundColor: isActive('/driver') ? `${COLORS.primary}10` : 'transparent',
+                    borderLeft: isActive('/driver') ? `4px solid ${COLORS.primary}` : '4px solid transparent',
+                  }}
+                  onClick={closeSidebar}
+                >
+                  <DriverIcon />
+                  <span style={{ marginLeft: '0.75rem' }}>Driver Dashboard</span>
+                </Link>
+              </li>
+            )}
             <li>
               <Link
                 to="/ride-history"
@@ -336,31 +348,35 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </aside>
 
       {/* Main content */}
-      <div className="main-content">
-        {/* Header - Mobile */}
-        <header
-          style={{
-            backgroundColor: COLORS.primary,
-            padding: '1rem',
-            color: 'white',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <button
-            onClick={toggleSidebar}
-            className="menu-button"
+      <div style={mainContentStyles}>
+        {/* Header - Mobile only */}
+        {!isDesktop && (
+          <header
+            style={{
+              backgroundColor: COLORS.primary,
+              padding: '1rem',
+              color: 'white',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
           >
-            <MenuIcon />
-          </button>
-          <h1 style={{ margin: 0, fontSize: '1.5rem' }}>IShare</h1>
-          <div style={{ width: '24px' }} />
-        </header>
+            <button
+              onClick={toggleSidebar}
+              style={menuButtonStyles}
+            >
+              <MenuIcon />
+            </button>
+            <h1 style={{ margin: 0, fontSize: '1.5rem' }}>IShare</h1>
+            <div style={{ width: '24px' }} />
+          </header>
+        )}
 
         {/* Page content */}
-        <main style={{ flex: 1, padding: '1rem' }}>{children}</main>
+        <main style={{ flex: 1, padding: '1rem' }}>
+          {children}
+        </main>
       </div>
 
       {/* Overlay when sidebar is open on mobile */}
@@ -374,4 +390,4 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   );
 };
 
-export default MainLayout; 
+export default MainLayout;

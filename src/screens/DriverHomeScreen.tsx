@@ -402,9 +402,8 @@ const DriverHomeScreen: React.FC = () => {
   // CSS styles
   const styles = {
     container: {
-      minHeight: '100vh',
-      backgroundColor: COLORS.background,
-      padding: '1rem'
+      // Remove padding since MainLayout already provides it
+      // padding: '1rem'
     },
     header: {
       display: 'flex',
