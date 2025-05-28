@@ -293,15 +293,18 @@ const MapScreen: React.FC = () => {
   // Search timeout ref
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Add the styles to the document
+  // Add the styles to the document only once
   useEffect(() => {
-    const styleElement = document.createElement('style');
-    styleElement.textContent = mapStyles;
-    document.head.appendChild(styleElement);
+    const styleId = 'map-screen-styles';
+    if (!document.getElementById(styleId)) {
+      const styleElement = document.createElement('style');
+      styleElement.id = styleId;
+      styleElement.textContent = mapStyles;
+      document.head.appendChild(styleElement);
+    }
     
-    return () => {
-      document.head.removeChild(styleElement);
-    };
+    // Don't remove styles on unmount to prevent React DOM issues
+    // The styles are scoped to this component anyway
   }, []);
 
   // Initialize WebSocket connection
@@ -345,13 +348,28 @@ const MapScreen: React.FC = () => {
   }, [currentLocation, pickup, dispatch]);
 
   // Clear suggestion markers
-  const clearSuggestionMarkers = () => {
-    suggestionMarkersRef.current.forEach(marker => {
-      marker.setMap(null);
-    });
-    suggestionMarkersRef.current = [];
-    setMapSuggestions([]);
-  };
+  const clearSuggestionMarkers = useCallback(() => {
+    try {
+      if (suggestionMarkersRef.current && suggestionMarkersRef.current.length > 0) {
+        suggestionMarkersRef.current.forEach((marker, index) => {
+          try {
+            if (marker && marker.setMap) {
+              marker.setMap(null);
+            }
+          } catch (error) {
+            console.warn(`Error clearing suggestion marker ${index}:`, error);
+          }
+        });
+      }
+      suggestionMarkersRef.current = [];
+      setMapSuggestions([]);
+    } catch (error) {
+      console.error('Error clearing suggestion markers:', error);
+      // Reset arrays even if clearing failed
+      suggestionMarkersRef.current = [];
+      setMapSuggestions([]);
+    }
+  }, []);
 
   // Search for places using Google Places API
   const searchPlacesOnMap = useCallback((query: string) => {
@@ -476,13 +494,21 @@ const MapScreen: React.FC = () => {
 
   // Hide suggestions when clicking outside
   useEffect(() => {
-    const handleClickOutside = () => {
-      setShowSuggestions(false);
+    const handleClickOutside = (event: Event) => {
+      const target = event.target as Element;
+      const searchContainer = document.querySelector('.search-container');
+      
+      // Only hide if click is truly outside and suggestions are shown
+      if (showSuggestions && searchContainer && !searchContainer.contains(target)) {
+        setShowSuggestions(false);
+      }
     };
 
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+    if (showSuggestions) {
+      document.addEventListener('click', handleClickOutside, true);
+      return () => document.removeEventListener('click', handleClickOutside, true);
+    }
+  }, [showSuggestions]);
 
   // Initialize Google Maps and set up
   const initMap = useCallback(() => {
@@ -539,144 +565,197 @@ const MapScreen: React.FC = () => {
 
   // Create pickup marker
   const createPickupMarker = (location: Location) => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !window.google) return;
 
-    // Remove existing marker if it exists
-    if (pickupMarkerRef.current) {
-      pickupMarkerRef.current.setMap(null);
-    }
-
-    // Create a custom marker icon
-    const pickupIcon = {
-      path: window.google.maps.SymbolPath.CIRCLE,
-      fillColor: COLORS.primary || '#007bff',
-      fillOpacity: 1,
-      strokeWeight: 2,
-      strokeColor: '#FFFFFF',
-      scale: 12
-    };
-
-    // Create the marker
-    const marker = new window.google.maps.Marker({
-      position: { lat: location.latitude, lng: location.longitude },
-      map: mapRef.current,
-      icon: pickupIcon,
-      title: 'Pickup Location (Drag to move)',
-      draggable: true
-    });
-
-    // Add drag listener to update pickup location
-    marker.addListener('dragend', (event: google.maps.MapMouseEvent) => {
-      if (event.latLng) {
-        // Try to get address using reverse geocoding
-        const geocoder = new window.google.maps.Geocoder();
-        geocoder.geocode({ location: event.latLng }, (results, status) => {
-          const address = status === 'OK' && results?.[0]?.formatted_address 
-            ? results[0].formatted_address 
-            : `${event.latLng!.lat().toFixed(6)}, ${event.latLng!.lng().toFixed(6)}`;
-          
-          const newPickup: Location = {
-            latitude: event.latLng!.lat(),
-            longitude: event.latLng!.lng(),
-            address
-          };
-          dispatch(setPickup(newPickup));
-          
-          // Recalculate route if destination exists
-          if (destination) {
-            fetchAndDrawRoute();
-          }
-        });
+    try {
+      // Remove existing marker if it exists
+      if (pickupMarkerRef.current) {
+        pickupMarkerRef.current.setMap(null);
+        pickupMarkerRef.current = null;
       }
-    });
 
-    pickupMarkerRef.current = marker;
+      // Create a custom marker icon
+      const pickupIcon = {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        fillColor: COLORS.primary || '#007bff',
+        fillOpacity: 1,
+        strokeWeight: 2,
+        strokeColor: '#FFFFFF',
+        scale: 12
+      };
+
+      // Create the marker
+      const marker = new window.google.maps.Marker({
+        position: { lat: location.latitude, lng: location.longitude },
+        map: mapRef.current,
+        icon: pickupIcon,
+        title: 'Pickup Location (Drag to move)',
+        draggable: true
+      });
+
+      // Add drag listener to update pickup location
+      marker.addListener('dragend', (event: google.maps.MapMouseEvent) => {
+        if (event.latLng) {
+          // Try to get address using reverse geocoding
+          const geocoder = new window.google.maps.Geocoder();
+          geocoder.geocode({ location: event.latLng }, (results, status) => {
+            const address = status === 'OK' && results?.[0]?.formatted_address 
+              ? results[0].formatted_address 
+              : `${event.latLng!.lat().toFixed(6)}, ${event.latLng!.lng().toFixed(6)}`;
+            
+            const newPickup: Location = {
+              latitude: event.latLng!.lat(),
+              longitude: event.latLng!.lng(),
+              address
+            };
+            dispatch(setPickup(newPickup));
+            
+            // Recalculate route if destination exists
+            if (destination) {
+              // Use setTimeout to prevent race conditions
+              setTimeout(() => {
+                fetchAndDrawRoute();
+              }, 100);
+            }
+          });
+        }
+      });
+
+      pickupMarkerRef.current = marker;
+    } catch (error) {
+      console.error('Error creating pickup marker:', error);
+    }
   };
 
   // Create destination marker
   const createDestinationMarker = (location: Location) => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !window.google) return;
 
-    // Remove existing marker if it exists
-    if (destinationMarkerRef.current) {
-      destinationMarkerRef.current.setMap(null);
-    }
-
-    // Create a custom marker icon
-    const destinationIcon = {
-      path: window.google.maps.SymbolPath.CIRCLE,
-      fillColor: COLORS.accent || '#dc3545',
-      fillOpacity: 1,
-      strokeWeight: 2,
-      strokeColor: '#FFFFFF',
-      scale: 12
-    };
-
-    // Create the marker
-    const marker = new window.google.maps.Marker({
-      position: { lat: location.latitude, lng: location.longitude },
-      map: mapRef.current,
-      icon: destinationIcon,
-      title: 'Destination Location (Drag to move)',
-      draggable: true
-    });
-
-    // Add drag listener to update destination location
-    marker.addListener('dragend', (event: google.maps.MapMouseEvent) => {
-      if (event.latLng) {
-        // Try to get address using reverse geocoding
-        const geocoder = new window.google.maps.Geocoder();
-        geocoder.geocode({ location: event.latLng }, (results, status) => {
-          const address = status === 'OK' && results?.[0]?.formatted_address 
-            ? results[0].formatted_address 
-            : `${event.latLng!.lat().toFixed(6)}, ${event.latLng!.lng().toFixed(6)}`;
-          
-          const newDestination: Location = {
-            latitude: event.latLng!.lat(),
-            longitude: event.latLng!.lng(),
-            address
-          };
-          dispatch(setDestination(newDestination));
-          
-          // Recalculate route if pickup exists
-          if (pickup) {
-            fetchAndDrawRoute();
-          }
-        });
+    try {
+      // Remove existing marker if it exists
+      if (destinationMarkerRef.current) {
+        destinationMarkerRef.current.setMap(null);
+        destinationMarkerRef.current = null;
       }
-    });
 
-    destinationMarkerRef.current = marker;
+      // Create a custom marker icon
+      const destinationIcon = {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        fillColor: COLORS.accent || '#dc3545',
+        fillOpacity: 1,
+        strokeWeight: 2,
+        strokeColor: '#FFFFFF',
+        scale: 12
+      };
+
+      // Create the marker
+      const marker = new window.google.maps.Marker({
+        position: { lat: location.latitude, lng: location.longitude },
+        map: mapRef.current,
+        icon: destinationIcon,
+        title: 'Destination Location (Drag to move)',
+        draggable: true
+      });
+
+      // Add drag listener to update destination location
+      marker.addListener('dragend', (event: google.maps.MapMouseEvent) => {
+        if (event.latLng) {
+          // Try to get address using reverse geocoding
+          const geocoder = new window.google.maps.Geocoder();
+          geocoder.geocode({ location: event.latLng }, (results, status) => {
+            const address = status === 'OK' && results?.[0]?.formatted_address 
+              ? results[0].formatted_address 
+              : `${event.latLng!.lat().toFixed(6)}, ${event.latLng!.lng().toFixed(6)}`;
+            
+            const newDestination: Location = {
+              latitude: event.latLng!.lat(),
+              longitude: event.latLng!.lng(),
+              address
+            };
+            dispatch(setDestination(newDestination));
+            
+            // Recalculate route if pickup exists
+            if (pickup) {
+              // Use setTimeout to prevent race conditions
+              setTimeout(() => {
+                fetchAndDrawRoute();
+              }, 100);
+            }
+          });
+        }
+      });
+
+      destinationMarkerRef.current = marker;
+    } catch (error) {
+      console.error('Error creating destination marker:', error);
+    }
   };
 
   // Update markers and route when pickup/destination changes
   useEffect(() => {
     if (!mapRef.current || !window.google) return;
 
-    // Update pickup marker
-    if (pickup) {
-      createPickupMarker(pickup);
-    }
+    // Use a timeout to batch multiple state changes and prevent race conditions
+    const updateTimeout = setTimeout(() => {
+      try {
+        // Update pickup marker
+        if (pickup) {
+          createPickupMarker(pickup);
+        }
 
-    // Update destination marker
-    if (destination) {
-      createDestinationMarker(destination);
-    }
+        // Update destination marker
+        if (destination) {
+          createDestinationMarker(destination);
+        }
 
-    // If both pickup and destination are set, calculate and display route
-    if (pickup && destination) {
-      fetchAndDrawRoute();
-    } else {
-      // Clear route if either pickup or destination is missing
-      clearRoute();
-    }
+        // If both pickup and destination are set, calculate and display route
+        if (pickup && destination) {
+          // Add a small delay to ensure markers are created first
+          setTimeout(() => {
+            fetchAndDrawRoute();
+          }, 150);
+        } else {
+          // Clear route if either pickup or destination is missing
+          clearRoute();
+        }
+      } catch (error) {
+        console.error('Error updating markers and route:', error);
+      }
+    }, 50);
+
+    // Cleanup timeout on dependency changes
+    return () => {
+      clearTimeout(updateTimeout);
+    };
   }, [pickup, destination]);
 
   // Fetch and draw route between pickup and destination
   const fetchAndDrawRoute = useCallback(() => {
-    if (!pickup || !destination || !mapRef.current || !directionsRendererRef.current) return;
+    if (!pickup || !destination || !mapRef.current) return;
 
     try {
+      // Clear any existing route first
+      if (directionsRendererRef.current) {
+        directionsRendererRef.current.setDirections({ routes: [] } as any);
+      }
+      
+      // Reset route info while loading
+      setRouteInfo(null);
+      setRouteCoordinates([]);
+
+      // Ensure directionsRenderer is properly initialized
+      if (!directionsRendererRef.current) {
+        const directionsRenderer = new window.google.maps.DirectionsRenderer({
+          suppressMarkers: true,
+          polylineOptions: {
+            strokeColor: COLORS.primary,
+            strokeWeight: 4,
+          },
+        });
+        directionsRenderer.setMap(mapRef.current);
+        directionsRendererRef.current = directionsRenderer;
+      }
+
       // Use DirectionsService to get route
       const directionsService = new window.google.maps.DirectionsService();
       
@@ -687,19 +766,22 @@ const MapScreen: React.FC = () => {
       };
 
       directionsService.route(request, (result: google.maps.DirectionsResult | null, status: google.maps.DirectionsStatus) => {
-        if (status === 'OK' && result) {
-          directionsRendererRef.current!.setDirections(result);
+        if (status === 'OK' && result && result.routes && result.routes.length > 0) {
+          // Route found successfully
+          if (directionsRendererRef.current) {
+            directionsRendererRef.current.setDirections(result);
+          }
           
           const route = result.routes[0];
           const leg = route.legs[0];
           
           // Update route info
           setRouteInfo({
-            distance: leg.distance?.text || '',
-            duration: leg.duration?.text || ''
+            distance: leg.distance?.text || 'Unknown distance',
+            duration: leg.duration?.text || 'Unknown duration'
           });
 
-          // Simple coordinate extraction from overview path
+          // Extract coordinates from overview path
           const coordinates: Coordinate[] = route.overview_path?.map(point => ({
             latitude: point.lat(),
             longitude: point.lng()
@@ -707,20 +789,50 @@ const MapScreen: React.FC = () => {
           setRouteCoordinates(coordinates);
 
           // Fit map to show entire route
-          const bounds = new window.google.maps.LatLngBounds();
-          if (route.bounds) {
-            bounds.extend(route.bounds.getNorthEast());
-            bounds.extend(route.bounds.getSouthWest());
+          if (route.bounds && mapRef.current) {
+            mapRef.current.fitBounds(route.bounds);
           }
-          mapRef.current!.fitBounds(bounds);
         } else {
-          console.error('Directions request failed:', status);
-          setRouteInfo(null);
+          // Route not found or error occurred
+          console.warn('Directions request failed or no route found:', status);
+          
+          // Clear any existing route
+          if (directionsRendererRef.current) {
+            directionsRendererRef.current.setDirections({ routes: [] } as any);
+          }
+          
+          // Set default route info for no route case
+          setRouteInfo({
+            distance: 'Route not available',
+            duration: 'Cannot calculate'
+          });
+          setRouteCoordinates([]);
+          
+          // Instead of fitting to route, fit to show both markers
+          if (mapRef.current && pickup && destination) {
+            const bounds = new window.google.maps.LatLngBounds();
+            bounds.extend({ lat: pickup.latitude, lng: pickup.longitude });
+            bounds.extend({ lat: destination.latitude, lng: destination.longitude });
+            
+            // Add some padding to the bounds
+            const padding = { top: 50, right: 50, bottom: 50, left: 50 };
+            mapRef.current.fitBounds(bounds, padding);
+          }
         }
       });
     } catch (error) {
       console.error('Failed to fetch route:', error);
-      setRouteInfo(null);
+      
+      // Clear route on error
+      if (directionsRendererRef.current) {
+        directionsRendererRef.current.setDirections({ routes: [] } as any);
+      }
+      
+      setRouteInfo({
+        distance: 'Error calculating route',
+        duration: 'Please try again'
+      });
+      setRouteCoordinates([]);
     }
   }, [pickup, destination]);
 
@@ -746,14 +858,12 @@ const MapScreen: React.FC = () => {
     // Update Redux state
     dispatch(setDestination(newDestination));
     
-    // Clear search and suggestions in a batch
-    setTimeout(() => {
-      setSearchQuery('');
-      setShowSuggestions(false);
-      setSearchSuggestions([]);
-      clearSuggestionMarkers();
-      setSearchStatus('');
-    }, 0);
+    // Clear search and suggestions in a batch with React's batching
+    setSearchQuery('');
+    setShowSuggestions(false);
+    setSearchSuggestions([]);
+    clearSuggestionMarkers();
+    setSearchStatus('');
   }, [dispatch, clearSuggestionMarkers]);
 
   // Handle search for destinations (legacy support)
@@ -856,6 +966,47 @@ const MapScreen: React.FC = () => {
     setSearchSuggestions([]);
   };
 
+  // Cleanup effect to prevent memory leaks and DOM issues
+  useEffect(() => {
+    return () => {
+      // Clear all timeouts
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+      
+      // Clear suggestion markers
+      try {
+        clearSuggestionMarkers();
+      } catch (error) {
+        console.warn('Error clearing suggestion markers on unmount:', error);
+      }
+      
+      // Clear main markers
+      try {
+        if (pickupMarkerRef.current) {
+          pickupMarkerRef.current.setMap(null);
+          pickupMarkerRef.current = null;
+        }
+        if (destinationMarkerRef.current) {
+          destinationMarkerRef.current.setMap(null);
+          destinationMarkerRef.current = null;
+        }
+      } catch (error) {
+        console.warn('Error clearing main markers on unmount:', error);
+      }
+      
+      // Clear directions renderer
+      try {
+        if (directionsRendererRef.current) {
+          directionsRendererRef.current.setMap(null);
+          directionsRendererRef.current = null;
+        }
+      } catch (error) {
+        console.warn('Error clearing directions renderer on unmount:', error);
+      }
+    };
+  }, [clearSuggestionMarkers]);
+
   if (loading && !currentLocation) {
     return <div>Loading map...</div>;
   }
@@ -887,7 +1038,10 @@ const MapScreen: React.FC = () => {
             />
             {searchQuery && (
               <button 
-                onClick={() => {
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // Clear all search-related state at once
                   setSearchQuery('');
                   setShowSuggestions(false);
                   setSearchSuggestions([]);
@@ -902,30 +1056,36 @@ const MapScreen: React.FC = () => {
           </div>
           
           {/* Search suggestions dropdown */}
-          {showSuggestions && searchSuggestions && (
+          {showSuggestions && Array.isArray(searchSuggestions) && (
             <div className="search-suggestions">
               {isSearching ? (
-                <div key="loading" className="loading-suggestions">Searching...</div>
+                <div key="loading-state" className="loading-suggestions">Searching...</div>
               ) : searchSuggestions.length > 0 ? (
-                searchSuggestions.map((suggestion, index) => {
-                  const key = suggestion.id || `${suggestion.name}-${suggestion.address}-${index}`;
-                  return (
-                    <div
-                      key={key}
-                      className="search-suggestion"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleSuggestionSelect(suggestion);
-                      }}
-                    >
-                      <div className="suggestion-name">{suggestion.name || 'Unknown place'}</div>
-                      <div className="suggestion-address">{suggestion.address || 'Address not available'}</div>
-                    </div>
-                  );
-                })
+                <>
+                  {searchSuggestions.map((suggestion, index) => {
+                    // Create more stable key
+                    const stableKey = suggestion.id ? 
+                      `suggestion-${suggestion.id}` : 
+                      `suggestion-${index}-${suggestion.name?.slice(0, 10) || 'unknown'}-${suggestion.address?.slice(0, 10) || 'noaddr'}`;
+                    
+                    return (
+                      <div
+                        key={stableKey}
+                        className="search-suggestion"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSuggestionSelect(suggestion);
+                        }}
+                      >
+                        <div className="suggestion-name">{suggestion.name || 'Unknown place'}</div>
+                        <div className="suggestion-address">{suggestion.address || 'Address not available'}</div>
+                      </div>
+                    );
+                  })}
+                </>
               ) : (
-                <div key="no-results" className="loading-suggestions">No results found</div>
+                <div key="no-results-state" className="loading-suggestions">No results found</div>
               )}
             </div>
           )}
@@ -979,6 +1139,11 @@ const MapScreen: React.FC = () => {
                 <div className="location-item">
                   <span className="location-icon">🕒</span>
                   <span>{routeInfo.distance} • {routeInfo.duration}</span>
+                  {(routeInfo.distance === 'Route not available' || routeInfo.distance === 'Error calculating route') && (
+                    <span style={{ color: COLORS.textSecondary, fontSize: '0.8rem', marginLeft: '0.5rem' }}>
+                      (Direct route may still be available)
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -988,8 +1153,13 @@ const MapScreen: React.FC = () => {
                 className="book-ride-btn"
                 onClick={handleBookRide}
                 disabled={isBookingRide}
+                style={{
+                  opacity: (routeInfo?.distance === 'Error calculating route') ? 0.8 : 1
+                }}
               >
-                {isBookingRide ? 'Booking...' : 'Book Now'}
+                {isBookingRide ? 'Booking...' : 
+                 (routeInfo?.distance === 'Route not available' || routeInfo?.distance === 'Error calculating route') ? 
+                 'Book Ride (No Route)' : 'Book Now'}
               </button>
               <button 
                 className="clear-route-btn"

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Use Google Maps API key
-const MAPS_API_KEY = 'AlzaSyM2UhGcgh7zeSvJiTtYIEnq4ACUZd4b52R';
+const MAPS_API_KEY = 'AlzaSyDeCaO-i9cEU6J3ykY_Uqa9gis2Kzqjo4n';
 
 // Optional proxy URL to avoid CORS issues in development
 const PROXY_URL = ''; // Leave empty to make direct requests
