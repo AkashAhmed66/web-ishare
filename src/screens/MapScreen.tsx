@@ -890,6 +890,7 @@ const MapScreen: React.FC = () => {
     console.log('MapScreen - pickup:', pickup);
     console.log('MapScreen - destination:', destination);
     console.log('MapScreen - currentLocation:', currentLocation);
+    console.log('MapScreen - routeInfo:', routeInfo);
     
     // Ensure pickup is set (use current location if not set)
     const actualPickup = pickup || currentLocation;
@@ -904,18 +905,29 @@ const MapScreen: React.FC = () => {
       dispatch(setPickup(currentLocation));
     }
     
+    // Prepare navigation data - include route info even if no route was found
     const navigationData = {
       pickup: actualPickup,
       destination,
-      routeInfo
+      routeInfo: routeInfo || {
+        distance: 'Direct route',
+        duration: 'Time varies'
+      }
     };
+    
+    // Log the navigation scenario
+    if (routeInfo && (routeInfo.distance === 'Route not available' || routeInfo.distance === 'Error calculating route')) {
+      console.log('MapScreen - Proceeding with booking despite no calculated route');
+      console.log('MapScreen - Driver can determine best route during ride');
+    }
     
     console.log('MapScreen - navigating with data:', navigationData);
     
     // Store in localStorage as backup
     localStorage.setItem('rideBookingData', JSON.stringify(navigationData));
     
-    // Navigate with state to ensure data persistence
+    // Navigate to ride options regardless of route calculation status
+    // The ride confirmation screen will handle route display appropriately
     navigate('/ride-options', {
       state: navigationData
     });

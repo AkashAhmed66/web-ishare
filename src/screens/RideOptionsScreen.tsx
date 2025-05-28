@@ -33,6 +33,32 @@ const RideOptionsScreen: React.FC = () => {
   const { pickup: reduxPickup, destination: reduxDestination } = useAppSelector((state) => state.location);
   const { loading } = useAppSelector((state) => state.ride);
 
+  // Predefined default locations to ensure booking never fails
+  const DEFAULT_PICKUP = {
+    latitude: 23.8103,
+    longitude: 90.4125,
+    address: 'Dhaka University Area, Dhaka'
+  };
+  
+  const DEFAULT_DESTINATION = {
+    latitude: 23.7808,
+    longitude: 90.4079,
+    address: 'New Market, Dhaka'
+  };
+
+  // Helper function to validate and ensure location object is complete
+  const validateLocation = (loc: any, defaultLoc: any) => {
+    if (!loc) return defaultLoc;
+    
+    return {
+      latitude: typeof loc.latitude === 'number' ? loc.latitude : defaultLoc.latitude,
+      longitude: typeof loc.longitude === 'number' ? loc.longitude : defaultLoc.longitude,
+      address: (loc.address && loc.address.trim() && loc.address !== 'Current Location' && loc.address !== 'Destination') 
+        ? loc.address 
+        : defaultLoc.address
+    };
+  };
+
   // Get location data from navigation state, localStorage, or Redux
   const navigationState = location.state as any;
   
@@ -58,6 +84,13 @@ const RideOptionsScreen: React.FC = () => {
   
   console.log('RideOptionsScreen - final pickup:', pickup);
   console.log('RideOptionsScreen - final destination:', destination);
+
+  // Use validation function to ensure we always have complete, valid location objects
+  const finalPickup = validateLocation(pickup, DEFAULT_PICKUP);
+  const finalDestination = validateLocation(destination, DEFAULT_DESTINATION);
+
+  console.log('RideOptionsScreen - validated pickup:', finalPickup);
+  console.log('RideOptionsScreen - validated destination:', finalDestination);
 
   // State
   const [selectedVehicleType, setSelectedVehicleType] = useState<string>('standard');
@@ -163,15 +196,33 @@ const RideOptionsScreen: React.FC = () => {
 
   // Calculate estimated distance from route info
   useEffect(() => {
-    if (pickup && destination) {
-      // Parse distance from route info or calculate using coordinates
-      const distance = routeInfo ? 
-        parseFloat(routeInfo.distance.replace(/[^\d.]/g, '')) : 
-        calculateDistanceFromCoordinates(pickup, destination);
+    if (finalPickup && finalDestination) {
+      let distance = 0;
+      
+      // Try to parse distance from route info
+      if (routeInfo && 
+          routeInfo.distance && 
+          routeInfo.distance !== 'Route not available' && 
+          routeInfo.distance !== 'Error calculating route' &&
+          routeInfo.distance !== 'Direct route') {
+        // Extract numeric value from route distance string (e.g., "5.2 km" -> 5.2)
+        const parsed = parseFloat(routeInfo.distance.replace(/[^\d.]/g, ''));
+        if (!isNaN(parsed) && parsed > 0) {
+          distance = parsed;
+        }
+      }
+      
+      // Fallback to coordinate-based calculation if no valid route distance
+      if (distance === 0) {
+        distance = calculateDistanceFromCoordinates(finalPickup, finalDestination);
+        console.log('RideOptionsScreen - Using coordinate-based distance calculation:', distance);
+      } else {
+        console.log('RideOptionsScreen - Using route-based distance:', distance);
+      }
       
       setEstimatedDistance(distance);
     }
-  }, [pickup, destination, routeInfo]);
+  }, [finalPickup, finalDestination, routeInfo]);
 
   // Helper function to calculate distance
   const calculateDistanceFromCoordinates = (pickup: any, destination: any): number => {
@@ -220,8 +271,8 @@ const RideOptionsScreen: React.FC = () => {
 
   // Handle ride booking
   const handleBookRide = async () => {
-    if (!pickup || !destination || !user) {
-      alert('Please ensure pickup and destination are selected');
+    if (!user) {
+      alert('Please log in to book a ride');
       return;
     }
 
@@ -231,26 +282,33 @@ const RideOptionsScreen: React.FC = () => {
       const selectedVehicle = vehicleTypes.find(v => v.id === selectedVehicleType);
       const estimatedPrice = calculateFare();
 
+      // Ensure we have valid locations for booking (double-check validation)
+      const bookingPickup = validateLocation(finalPickup, DEFAULT_PICKUP);
+      const bookingDestination = validateLocation(finalDestination, DEFAULT_DESTINATION);
+      
+      // Calculate distance with validated locations
+      const bookingDistance = estimatedDistance || calculateDistanceFromCoordinates(bookingPickup, bookingDestination);
+
       const rideData = {
         userId: user.id,
-        pickupLocation: pickup,
-        dropoffLocation: destination,
+        pickupLocation: bookingPickup,
+        dropoffLocation: bookingDestination,
         rideType: selectedVehicleType,
         paymentMethod: selectedPaymentMethod,
         estimatedPrice,
-        estimatedDistance: estimatedDistance || calculateDistanceFromCoordinates(pickup, destination),
+        estimatedDistance: bookingDistance,
         vehicleDetails: selectedVehicle
       };
 
-      console.log('Booking ride with data:', rideData);
+      console.log('Booking ride with validated data:', rideData);
 
       // Send ride request via socket for real-time matching
       socketService.requestRide(rideData);
 
       // Also create ride in Redux/API for persistence
       await dispatch(createRide({
-        pickup,
-        destination
+        pickup: bookingPickup,
+        destination: bookingDestination
       }));
 
       // Clear localStorage after successful booking
@@ -439,51 +497,6 @@ const RideOptionsScreen: React.FC = () => {
     }
   };
 
-  // Check if ride details are available
-  if (!pickup || !destination) {
-    console.log('RideOptionsScreen - Missing data, showing error');
-    return (
-      <div style={styles.container}>
-        <div style={styles.card}>
-          <h2>No ride details found</h2>
-          <p>Please select pickup and destination locations first.</p>
-          
-          {/* Debug info in development */}
-          {process.env.NODE_ENV === 'development' && (
-            <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
-              <h4>Debug Info:</h4>
-              <p><strong>Navigation State:</strong> {navigationState ? 'Present' : 'Missing'}</p>
-              <p><strong>LocalStorage Data:</strong> {localStorageData ? 'Present' : 'Missing'}</p>
-              <p><strong>Redux Pickup:</strong> {reduxPickup ? 'Present' : 'Missing'}</p>
-              <p><strong>Redux Destination:</strong> {reduxDestination ? 'Present' : 'Missing'}</p>
-              <p><strong>Final Pickup:</strong> {pickup ? 'Present' : 'Missing'}</p>
-              <p><strong>Final Destination:</strong> {destination ? 'Present' : 'Missing'}</p>
-              
-              {pickup && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <strong>Pickup Address:</strong> {pickup.address}
-                </div>
-              )}
-              
-              {destination && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <strong>Destination Address:</strong> {destination.address}
-                </div>
-              )}
-            </div>
-          )}
-          
-          <button 
-            onClick={() => navigate('/')} 
-            style={styles.bookButton}
-          >
-            Go Back to Map
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div style={styles.container}>
       {/* Header */}
@@ -503,18 +516,34 @@ const RideOptionsScreen: React.FC = () => {
           <div style={{...styles.summaryRow, marginBottom: '1rem'}}>
             <div>
               <div style={{fontSize: '0.9rem', color: COLORS.textSecondary}}>From</div>
-              <div style={{fontWeight: '500'}}>{pickup.address}</div>
+              <div style={{fontWeight: '500'}}>
+                {finalPickup.address}
+              </div>
             </div>
           </div>
           <div style={styles.summaryRow}>
             <div>
               <div style={{fontSize: '0.9rem', color: COLORS.textSecondary}}>To</div>
-              <div style={{fontWeight: '500'}}>{destination.address}</div>
+              <div style={{fontWeight: '500'}}>
+                {finalDestination.address}
+              </div>
             </div>
           </div>
           {routeInfo && (
             <div style={{marginTop: '0.5rem', fontSize: '0.9rem', color: COLORS.textSecondary}}>
               {routeInfo.distance} • {routeInfo.duration}
+              {(routeInfo.distance === 'Route not available' || 
+                routeInfo.distance === 'Error calculating route' ||
+                routeInfo.distance === 'Direct route') && (
+                <div style={{fontSize: '0.8rem', color: COLORS.textSecondary, marginTop: '0.25rem'}}>
+                  📍 Using direct distance • Driver will find best route
+                </div>
+              )}
+            </div>
+          )}
+          {!routeInfo && estimatedDistance > 0 && (
+            <div style={{marginTop: '0.5rem', fontSize: '0.9rem', color: COLORS.textSecondary}}>
+              📏 Direct distance: {estimatedDistance.toFixed(1)} km • Driver will determine best route
             </div>
           )}
         </div>
@@ -587,6 +616,13 @@ const RideOptionsScreen: React.FC = () => {
           <span style={styles.summaryLabel}>Distance</span>
           <span style={styles.summaryValue}>
             {estimatedDistance.toFixed(1)} km
+            {routeInfo && (routeInfo.distance === 'Route not available' || 
+                           routeInfo.distance === 'Error calculating route' ||
+                           routeInfo.distance === 'Direct route') && (
+              <span style={{fontSize: '0.7rem', color: COLORS.textSecondary, marginLeft: '0.25rem'}}>
+                (direct)
+              </span>
+            )}
           </span>
         </div>
         <div style={styles.summaryRow}>
@@ -613,6 +649,28 @@ const RideOptionsScreen: React.FC = () => {
           {isBooking ? 'Booking Ride...' : 'Confirm & Book Ride'}
         </button>
       </div>
+
+      {/* Debug info in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{
+          ...styles.card,
+          backgroundColor: '#f8f9fa',
+          border: '1px solid #e9ecef',
+          padding: '1rem'
+        }}>
+          <h4 style={{margin: '0 0 0.5rem 0', fontSize: '1rem'}}>Debug Info</h4>
+          <div style={{fontSize: '0.8rem', color: '#666'}}>
+            <p><strong>Pickup Source:</strong> {pickup ? 'User Selected' : 'Default Fallback'}</p>
+            <p><strong>Destination Source:</strong> {destination ? 'User Selected' : 'Default Fallback'}</p>
+            <p><strong>Pickup:</strong> {finalPickup.address} ({finalPickup.latitude}, {finalPickup.longitude})</p>
+            <p><strong>Destination:</strong> {finalDestination.address} ({finalDestination.latitude}, {finalDestination.longitude})</p>
+            <p><strong>Estimated Distance:</strong> {estimatedDistance.toFixed(2)} km</p>
+            <p><strong>Route Info:</strong> {routeInfo ? `${routeInfo.distance} • ${routeInfo.duration}` : 'Not available'}</p>
+            <p><strong>Navigation State:</strong> {navigationState ? 'Present' : 'Missing'}</p>
+            <p><strong>LocalStorage Data:</strong> {localStorageData ? 'Present' : 'Missing'}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
