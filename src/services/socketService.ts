@@ -41,7 +41,7 @@ class SocketService {
   private listeners: Map<string, Array<(data: any) => void>> = new Map();
 
   // Initialize socket connection
-  connect(token: string): Socket {
+  connect(userId: string): Socket {
     if (this.socket && this.socket.connected) {
       return this.socket;
     }
@@ -49,7 +49,9 @@ class SocketService {
     // Clean up any existing connection
     this.disconnect();
 
-    // Create new socket connection with auth token
+    console.log(`[SocketService] Connecting with userId: ${userId} to ${SOCKET_URL}`);
+
+    // Create new socket connection
     this.socket = io(SOCKET_URL, {
       transports: ['websocket'],
       autoConnect: true,
@@ -57,9 +59,6 @@ class SocketService {
       reconnectionAttempts: 5,
       reconnectionDelay: 3000,
       timeout: 10000,
-      auth: {
-        token,
-      },
     });
 
     // Set up event listeners
@@ -86,31 +85,32 @@ class SocketService {
     if (!this.socket) return;
 
     this.socket.on(SocketEvent.CONNECT, () => {
-      console.log('Socket connected');
+      console.log('[SocketService] Socket connected successfully');
     });
 
     this.socket.on(SocketEvent.DISCONNECT, (reason) => {
-      console.log(`Socket disconnected: ${reason}`);
+      console.log(`[SocketService] Socket disconnected: ${reason}`);
     });
 
     this.socket.on(SocketEvent.CONNECT_ERROR, (error) => {
-      console.error('Socket connection error:', error);
-      
-      // Auto reconnect with token refresh if needed
-      this.reconnectTimer = setTimeout(() => {
-        const token = localStorage.getItem('auth_token');
-        if (token && this.socket) {
-          this.socket.auth = { token };
-          this.socket.connect();
-        }
-      }, 5000);
+      console.error('[SocketService] Socket connection error:', error);
+    });
+
+    this.socket.on('authenticated', (data: any) => {
+      console.log('[SocketService] Socket authenticated:', data);
+    });
+
+    this.socket.on('driver_status_updated', (data: any) => {
+      console.log('[SocketService] Driver status updated:', data);
     });
   }
 
   // Add event listener
   on<T>(event: SocketEvent | string, callback: (data: T) => void): () => void {
     if (!this.socket) {
-      throw new Error('Socket is not connected');
+      console.warn(`[SocketService] Cannot add listener for ${event}: socket not initialized`);
+      // Return a no-op function instead of throwing an error
+      return () => {};
     }
 
     // Add to socket.io
@@ -145,11 +145,17 @@ class SocketService {
 
   // Emit event
   emit<T>(event: SocketEvent | string, data: T): void {
-    if (!this.socket || !this.socket.connected) {
-      console.error('Cannot emit event: socket not connected');
+    if (!this.socket) {
+      console.error(`[SocketService] Cannot emit ${event}: socket not initialized`);
       return;
     }
 
+    if (!this.socket.connected) {
+      console.error(`[SocketService] Cannot emit ${event}: socket not connected`);
+      return;
+    }
+
+    console.log(`[SocketService] Emitting event: ${event}`, data);
     this.socket.emit(event, data);
   }
 
@@ -193,7 +199,7 @@ class SocketService {
       return;
     }
 
-    this.socket.emit('driver_accepted', { rideId, driverId });
+    this.socket.emit('driver_accept_ride', { rideId, driverId });
   }
 
   // Start ride (for drivers)
@@ -247,6 +253,50 @@ class SocketService {
   // Check if socket is connected
   isConnected(): boolean {
     return !!this.socket && this.socket.connected;
+  }
+
+  // Wait for socket connection (with timeout)
+  async waitForConnection(timeoutMs: number = 5000): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (this.isConnected()) {
+        resolve(true);
+        return;
+      }
+
+      if (!this.socket) {
+        resolve(false);
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, timeoutMs);
+
+      this.socket.once('connect', () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+
+      this.socket.once('connect_error', () => {
+        clearTimeout(timeout);
+        resolve(false);
+      });
+    });
+  }
+
+  // Get socket status for debugging
+  getStatus(): {
+    socketExists: boolean;
+    isConnected: boolean;
+    socketId: string | null;
+    url: string;
+  } {
+    return {
+      socketExists: !!this.socket,
+      isConnected: this.isConnected(),
+      socketId: this.socket?.id || null,
+      url: SOCKET_URL,
+    };
   }
 }
 
