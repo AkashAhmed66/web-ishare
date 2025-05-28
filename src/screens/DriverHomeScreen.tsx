@@ -52,6 +52,17 @@ const DriverHomeScreen: React.FC = () => {
     onlineTime: '0h 0m'
   });
 
+  // Add console logging at the start of component
+  const userId = user?.id || (user as any)?._id || (user as any)?.userId;
+  
+  console.log('[DriverHomeScreen] Component rendered with user:', {
+    user: user,
+    userId: userId,
+    userRole: user?.role,
+    userIsDriver: user?.role === 'driver',
+    socketConnected: socketService.isConnected()
+  });
+
   // Setup socket listeners
   useEffect(() => {
     if (!user) {
@@ -910,6 +921,50 @@ const DriverHomeScreen: React.FC = () => {
             }}
           >
             Simple Broadcast Test
+          </button>
+
+          <button
+            onClick={() => {
+              console.log('[DriverHomeScreen] === REAL USER RIDE REQUEST TEST ===');
+              
+              // Test with a real user-like ride request format similar to RideOptionsScreen
+              const realUserRequest = {
+                userId: userId || 'test_user_passenger', // Use current user or test user
+                passengerId: userId || 'test_user_passenger',
+                passengerName: user?.name || 'Test Passenger',
+                pickupLocation: {
+                  address: 'Real User Test Pickup, Dhaka',
+                  latitude: 23.8103,
+                  longitude: 90.4125
+                },
+                dropoffLocation: {
+                  address: 'Real User Test Dropoff, Dhaka',  
+                  latitude: 23.8203,
+                  longitude: 90.4225
+                },
+                rideType: 'standard',
+                paymentMethod: 'cash',
+                estimatedPrice: 250,
+                estimatedDistance: 7.5,
+                requestTime: new Date().toISOString()
+              };
+              
+              console.log('[DriverHomeScreen] Sending real user format test:', realUserRequest);
+              socketService.emit('ride_request', realUserRequest);
+              alert('Real user format test sent! This mimics how passengers send requests.');
+            }}
+            style={{
+              marginTop: '0.5rem',
+              padding: '0.25rem 0.5rem',
+              fontSize: '0.8rem',
+              backgroundColor: '#fd7e14',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Test Real User Request
           </button>
         </div>
       )}

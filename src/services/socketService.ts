@@ -183,13 +183,29 @@ class SocketService {
     rideType: string;
     paymentMethod: string;
     estimatedPrice: number;
+    estimatedDistance?: number;
+    vehicleDetails?: any;
   }): void {
     if (!this.socket || !this.socket.connected) {
       console.error('Cannot request ride: socket not connected');
       return;
     }
 
-    this.socket.emit('ride_request', rideDetails);
+    if (!rideDetails.userId) {
+      console.error('Cannot request ride: userId is required');
+      return;
+    }
+
+    // Add missing fields that the backend expects
+    const rideRequest = {
+      ...rideDetails,
+      passengerId: rideDetails.userId,
+      passengerName: `User ${rideDetails.userId.slice(-4) || 'Unknown'}`, // Safe slice with fallback
+      requestTime: new Date().toISOString()
+    };
+
+    console.log('[SocketService] Sending ride request:', rideRequest);
+    this.socket.emit('ride_request', rideRequest);
   }
 
   // Accept ride (for drivers)

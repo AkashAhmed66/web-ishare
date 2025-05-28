@@ -238,7 +238,7 @@ const RideOptionsScreen: React.FC = () => {
         rideType: selectedVehicleType,
         paymentMethod: selectedPaymentMethod,
         estimatedPrice,
-        estimatedDistance,
+        estimatedDistance: estimatedDistance || calculateDistanceFromCoordinates(pickup, destination),
         vehicleDetails: selectedVehicle
       };
 

@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '../redux/store';
 import { useNavigate } from 'react-router-dom';
 import { COLORS, STYLES } from '../styles/theme';
 import { createRide } from '../redux/slices/rideSlice';
+import socketService from '../services/socketService';
 
 const RideConfirmationScreen: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +15,8 @@ const RideConfirmationScreen: React.FC = () => {
   const [selectedRideType, setSelectedRideType] = useState('standard');
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [showFareBreakdown, setShowFareBreakdown] = useState(false);
+  const [isBooking, setIsBooking] = useState(false);
+  const [timeoutRef, setTimeoutRef] = useState<NodeJS.Timeout | null>(null);
 
   const rideTypes = [
     {
@@ -60,23 +63,184 @@ const RideConfirmationScreen: React.FC = () => {
   const serviceFee = 2.50;
   const totalFare = estimatedFare + tax + serviceFee;
 
+  // Setup socket connection and listeners
+  useEffect(() => {
+    if (!user) return;
+
+    // Try to get user ID from various possible fields
+    const userId = user.id || (user as any)._id || (user as any).userId;
+    
+    if (!userId) {
+      console.error('[RideConfirmationScreen] User ID is undefined! Full user object:', user);
+      console.error('[RideConfirmationScreen] Available user fields:', Object.keys(user));
+      
+      alert('Error: User not properly authenticated. Please log out and log in again.');
+      return;
+    }
+
+    console.log('[RideConfirmationScreen] Setting up socket connection for passenger:', userId);
+
+    // Initialize socket connection
+    socketService.connect(userId);
+
+    // Authenticate as passenger
+    socketService.emit('authenticate', {
+      userId: userId,
+      userType: 'passenger'
+    });
+
+    // Listen for ride events
+    const unsubscribeRideRequestReceived = socketService.on('ride_request_received', (data: any) => {
+      console.log('[RideConfirmationScreen] Ride request received by server:', data);
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+        setTimeoutRef(null);
+      }
+      setIsBooking(false);
+      // Navigate to ride status or tracking screen
+      navigate(`/ride-status/${data.rideId}`);
+    });
+
+    const unsubscribeRideRequestError = socketService.on('ride_request_error', (data: any) => {
+      console.error('[RideConfirmationScreen] Ride request error:', data);
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+        setTimeoutRef(null);
+      }
+      setIsBooking(false);
+      alert('Failed to book ride: ' + data.message);
+    });
+
+    const unsubscribeDriverAssigned = socketService.on('driver_assigned', (data: any) => {
+      console.log('[RideConfirmationScreen] Driver assigned to ride:', data);
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+        setTimeoutRef(null);
+      }
+      setIsBooking(false);
+      // You could show a notification that a driver was found
+    });
+
+    const unsubscribeRideAssigned = socketService.on('ride_assigned', (data: any) => {
+      console.log('[RideConfirmationScreen] Ride assigned confirmation:', data);
+      // This confirms our ride was broadcast to drivers
+    });
+
+    return () => {
+      unsubscribeRideRequestReceived();
+      unsubscribeRideRequestError();
+      unsubscribeDriverAssigned();
+      unsubscribeRideAssigned();
+      
+      // Clear timeout if component unmounts
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+      }
+    };
+  }, [user, navigate]);
+
   const handleConfirmRide = async () => {
-    if (!pickup || !destination) return;
+    if (!pickup || !destination || !user) {
+      alert('Please ensure pickup and destination are selected');
+      return;
+    }
+
+    // Try to get user ID from various possible fields
+    const userId = user.id || (user as any)._id || (user as any).userId;
+    
+    if (!userId) {
+      console.error('[RideConfirmationScreen] User ID is undefined! Full user object:', user);
+      console.error('[RideConfirmationScreen] Available user fields:', Object.keys(user));
+      
+      alert('Error: User not properly authenticated. Please log out and log in again.');
+      return;
+    }
+
+    setIsBooking(true);
 
     try {
+      console.log('[RideConfirmationScreen] === PASSENGER RIDE REQUEST START ===');
+      console.log('[RideConfirmationScreen] User:', user);
+      console.log('[RideConfirmationScreen] User ID:', userId);
+      console.log('[RideConfirmationScreen] Pickup:', pickup);
+      console.log('[RideConfirmationScreen] Destination:', destination);
+      console.log('[RideConfirmationScreen] Selected ride type:', selectedRideType);
+      console.log('[RideConfirmationScreen] Payment method:', paymentMethod);
+      console.log('[RideConfirmationScreen] Total fare:', totalFare);
+      console.log('[RideConfirmationScreen] Socket connected:', socketService.isConnected());
+
+      if (!socketService.isConnected()) {
+        console.error('[RideConfirmationScreen] Socket not connected, attempting to connect...');
+        socketService.connect(userId);
+        
+        const connected = await socketService.waitForConnection(5000);
+        if (!connected) {
+          throw new Error('Failed to connect to server');
+        }
+        console.log('[RideConfirmationScreen] Socket connected successfully');
+      }
+
+      // Calculate estimated distance (simple calculation for demo)
+      const estimatedDistance = calculateDistanceFromCoordinates(pickup, destination);
+      
       const rideData = {
-        pickup,
-        destination,
+        userId: userId,
+        pickupLocation: pickup,
+        dropoffLocation: destination,
         rideType: selectedRideType,
         paymentMethod,
-        estimatedFare: totalFare
+        estimatedPrice: totalFare,
+        estimatedDistance: estimatedDistance,
+        vehicleDetails: selectedRide
       };
 
-      const result = await dispatch(createRide(rideData)).unwrap();
-      navigate(`/ride-status/${result.id}`);
+      console.log('[RideConfirmationScreen] Sending ride request data:', rideData);
+      console.log('[RideConfirmationScreen] Broadcasting to all online drivers...');
+
+      // Send ride request via socket for real-time matching with drivers
+      socketService.requestRide(rideData);
+
+      // Also create ride in Redux/API for persistence  
+      const result = await dispatch(createRide({
+        pickup,
+        destination
+      })).unwrap();
+
+      console.log('[RideConfirmationScreen] Ride created in database:', result);
+      console.log('[RideConfirmationScreen] === RIDE REQUEST BROADCAST COMPLETE ===');
+      
+      // Set a timeout to handle case where no driver accepts
+      const timeoutId = setTimeout(() => {
+        console.log('[RideConfirmationScreen] No driver found within timeout');
+        setIsBooking(false);
+        setTimeoutRef(null);
+        alert('No drivers available at the moment. Please try again later.');
+      }, 60000); // 60 seconds timeout
+
+      // Store timeout reference
+      setTimeoutRef(timeoutId);
+      
+      // Don't navigate immediately - wait for driver response or timeout
+      // The socket listeners will handle navigation when driver accepts
+      
     } catch (error) {
-      console.error('Failed to create ride:', error);
+      console.error('[RideConfirmationScreen] Failed to book ride:', error);
+      setIsBooking(false);
+      alert('Failed to book ride. Please try again.');
     }
+  };
+
+  // Helper function to calculate distance
+  const calculateDistanceFromCoordinates = (pickup: any, destination: any): number => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (destination.latitude - pickup.latitude) * Math.PI / 180;
+    const dLon = (destination.longitude - pickup.longitude) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(pickup.latitude * Math.PI / 180) * Math.cos(destination.latitude * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   };
 
   if (!pickup || !destination) {
@@ -412,19 +576,106 @@ const RideConfirmationScreen: React.FC = () => {
 
           <button
             onClick={handleConfirmRide}
-            disabled={loading}
+            disabled={isBooking || loading}
             style={{
               ...STYLES.buttonPrimary,
               width: '100%',
               height: '3.5rem',
               fontSize: '1.1rem',
               fontWeight: 'bold',
-              opacity: loading ? 0.7 : 1,
-              cursor: loading ? 'not-allowed' : 'pointer'
+              opacity: (isBooking || loading) ? 0.7 : 1,
+              cursor: (isBooking || loading) ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? '🔄 Booking...' : '🚗 Confirm Ride'}
+            {isBooking ? '📡 Broadcasting to Drivers...' : (loading ? '🔄 Booking...' : '🚗 Confirm Ride')}
           </button>
+
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '1rem',
+              backgroundColor: '#f8f9fa',
+              border: '1px solid #e9ecef',
+              borderRadius: '8px',
+              fontSize: '0.8rem'
+            }}>
+              <div><strong>Debug Info:</strong></div>
+              <div>User ID: {(user?.id || (user as any)?._id || (user as any)?.userId) || 'undefined'}</div>
+              <div>User.id: {user?.id || 'undefined'}</div>
+              <div>User._id: {(user as any)?._id || 'undefined'}</div>
+              <div>User.userId: {(user as any)?.userId || 'undefined'}</div>
+              <div>User Name: {user?.name || 'undefined'}</div>
+              <div>User Role: {user?.role || 'undefined'}</div>
+              <div>User Keys: {user ? Object.keys(user).join(', ') : 'no user'}</div>
+              <div>Socket Connected: {socketService.isConnected() ? 'Yes' : 'No'}</div>
+              <div>Is Booking: {isBooking ? 'Yes' : 'No'}</div>
+              <div>Pickup: {pickup?.address || 'undefined'}</div>
+              <div>Destination: {destination?.address || 'undefined'}</div>
+              <div>Selected Ride Type: {selectedRideType}</div>
+              <div>Payment Method: {paymentMethod}</div>
+              <div>Total Fare: ${totalFare.toFixed(2)}</div>
+              
+              <button
+                onClick={() => {
+                  console.log('[RideConfirmationScreen] Manual test ride request');
+                  
+                  // Try to get user ID from various sources
+                  const detectedUserId = (user?.id || (user as any)?._id || (user as any)?.userId);
+                  let testUserId = detectedUserId;
+                  
+                  if (!testUserId) {
+                    // Try localStorage
+                    try {
+                      const storedUser = localStorage.getItem('user');
+                      if (storedUser) {
+                        const parsedUser = JSON.parse(storedUser);
+                        testUserId = parsedUser.id || parsedUser._id || parsedUser.userId;
+                      }
+                    } catch (e) {
+                      console.error('Error parsing localStorage:', e);
+                    }
+                  }
+                  
+                  if (!testUserId) {
+                    testUserId = 'test_passenger_manual_' + Date.now();
+                    console.log('[RideConfirmationScreen] Using generated test user ID:', testUserId);
+                  }
+                  
+                  if (pickup && destination) {
+                    const testRideData = {
+                      userId: testUserId,
+                      pickupLocation: pickup,
+                      dropoffLocation: destination,
+                      rideType: selectedRideType,
+                      paymentMethod,
+                      estimatedPrice: totalFare,
+                      estimatedDistance: calculateDistanceFromCoordinates(pickup, destination),
+                      vehicleDetails: selectedRide
+                    };
+                    
+                    console.log('[RideConfirmationScreen] Sending manual test ride request:', testRideData);
+                    socketService.requestRide(testRideData);
+                    alert('Manual test ride request sent! Check driver dashboard.');
+                  } else {
+                    alert('Pickup and destination required for test');
+                  }
+                }}
+                style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  width: '100%'
+                }}
+              >
+                🧪 Manual Test Ride Request
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
