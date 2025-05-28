@@ -4,6 +4,8 @@ import { useAppDispatch, useAppSelector } from '../redux/store';
 import { COLORS, STYLES } from '../styles/theme';
 import socketService from '../services/socketService';
 import { createRide } from '../redux/slices/rideSlice';
+import { getCurrentLocation, setPickup } from '../redux/slices/locationSlice';
+import locationService from '../services/locationService';
 
 interface VehicleType {
   id: string;
@@ -30,7 +32,7 @@ const RideOptionsScreen: React.FC = () => {
   const location = useLocation();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const { pickup: reduxPickup, destination: reduxDestination } = useAppSelector((state) => state.location);
+  const { pickup: reduxPickup, destination: reduxDestination, currentLocation } = useAppSelector((state) => state.location);
   const { loading } = useAppSelector((state) => state.ride);
 
   // Predefined default locations to ensure booking never fails
@@ -77,6 +79,7 @@ const RideOptionsScreen: React.FC = () => {
   console.log('RideOptionsScreen - localStorageData:', localStorageData);
   console.log('RideOptionsScreen - reduxPickup:', reduxPickup);
   console.log('RideOptionsScreen - reduxDestination:', reduxDestination);
+  console.log('RideOptionsScreen - currentLocation:', currentLocation);
   
   const pickup = navigationState?.pickup || localStorageData?.pickup || reduxPickup;
   const destination = navigationState?.destination || localStorageData?.destination || reduxDestination;
@@ -98,6 +101,43 @@ const RideOptionsScreen: React.FC = () => {
   const [isBooking, setIsBooking] = useState(false);
   const [estimatedDistance, setEstimatedDistance] = useState<number>(0);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(navigationRouteInfo || null);
+  const [isGettingCurrentLocation, setIsGettingCurrentLocation] = useState(false);
+  const [currentLocationPickup, setCurrentLocationPickup] = useState<any>(null);
+
+  // Auto-get current location if pickup is not available
+  useEffect(() => {
+    const shouldGetCurrentLocation = !pickup && !currentLocation;
+    
+    if (shouldGetCurrentLocation && !isGettingCurrentLocation) {
+      console.log('RideOptionsScreen - No pickup location found, getting current location...');
+      setIsGettingCurrentLocation(true);
+      
+      // Try to get current location
+      locationService.getCurrentLocation()
+        .then((currentLoc) => {
+          console.log('RideOptionsScreen - Got current location:', currentLoc);
+          setCurrentLocationPickup(currentLoc);
+          // Also update Redux store
+          dispatch(setPickup(currentLoc));
+          setIsGettingCurrentLocation(false);
+        })
+        .catch((error) => {
+          console.error('RideOptionsScreen - Failed to get current location:', error);
+          setIsGettingCurrentLocation(false);
+          // Fallback to default pickup
+          setCurrentLocationPickup(DEFAULT_PICKUP);
+        });
+    } else if (currentLocation && !pickup) {
+      // Use existing current location from Redux
+      console.log('RideOptionsScreen - Using existing current location as pickup');
+      setCurrentLocationPickup(currentLocation);
+      dispatch(setPickup(currentLocation));
+    }
+  }, [pickup, currentLocation, dispatch, isGettingCurrentLocation]);
+
+  // Update finalPickup to use current location if available
+  const actualPickup = pickup || currentLocationPickup || finalPickup;
+  const actualFinalPickup = validateLocation(actualPickup, DEFAULT_PICKUP);
 
   // Vehicle types
   const vehicleTypes: VehicleType[] = [
@@ -196,7 +236,7 @@ const RideOptionsScreen: React.FC = () => {
 
   // Calculate estimated distance from route info
   useEffect(() => {
-    if (finalPickup && finalDestination) {
+    if (actualFinalPickup && finalDestination) {
       let distance = 0;
       
       // Try to parse distance from route info
@@ -214,7 +254,7 @@ const RideOptionsScreen: React.FC = () => {
       
       // Fallback to coordinate-based calculation if no valid route distance
       if (distance === 0) {
-        distance = calculateDistanceFromCoordinates(finalPickup, finalDestination);
+        distance = calculateDistanceFromCoordinates(actualFinalPickup, finalDestination);
         console.log('RideOptionsScreen - Using coordinate-based distance calculation:', distance);
       } else {
         console.log('RideOptionsScreen - Using route-based distance:', distance);
@@ -222,7 +262,7 @@ const RideOptionsScreen: React.FC = () => {
       
       setEstimatedDistance(distance);
     }
-  }, [finalPickup, finalDestination, routeInfo]);
+  }, [actualFinalPickup, finalDestination, routeInfo]);
 
   // Helper function to calculate distance
   const calculateDistanceFromCoordinates = (pickup: any, destination: any): number => {
@@ -283,7 +323,7 @@ const RideOptionsScreen: React.FC = () => {
       const estimatedPrice = calculateFare();
 
       // Ensure we have valid locations for booking (double-check validation)
-      const bookingPickup = validateLocation(finalPickup, DEFAULT_PICKUP);
+      const bookingPickup = validateLocation(actualFinalPickup, DEFAULT_PICKUP);
       const bookingDestination = validateLocation(finalDestination, DEFAULT_DESTINATION);
       
       // Calculate distance with validated locations
@@ -513,12 +553,38 @@ const RideOptionsScreen: React.FC = () => {
 
         {/* Trip Summary */}
         <div style={styles.section}>
-          <div style={{...styles.summaryRow, marginBottom: '1rem'}}>
-            <div>
-              <div style={{fontSize: '0.9rem', color: COLORS.textSecondary}}>From</div>
-              <div style={{fontWeight: '500'}}>
-                {finalPickup.address}
-              </div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '1rem',
+            background: COLORS.card,
+            borderRadius: '8px',
+            marginBottom: '1rem',
+          }}>
+            <div style={{color: COLORS.primary, marginRight: '0.5rem'}}>📍</div>
+            <div style={{fontSize: '0.9rem', color: COLORS.textSecondary}}>From</div>
+            <div style={{fontWeight: '500'}}>
+              {isGettingCurrentLocation ? (
+                <span style={{color: COLORS.textSecondary, fontStyle: 'italic'}}>
+                  Getting your current location...
+                </span>
+              ) : (
+                <>
+                  {actualFinalPickup.address}
+                  {(currentLocationPickup || (currentLocation && pickup === currentLocation)) && (
+                    <span style={{
+                      marginLeft: '0.5rem',
+                      fontSize: '0.8rem',
+                      color: COLORS.primary,
+                      background: COLORS.background,
+                      padding: '2px 6px',
+                      borderRadius: '4px'
+                    }}>
+                      Current Location
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
           <div style={styles.summaryRow}>
@@ -662,7 +728,7 @@ const RideOptionsScreen: React.FC = () => {
           <div style={{fontSize: '0.8rem', color: '#666'}}>
             <p><strong>Pickup Source:</strong> {pickup ? 'User Selected' : 'Default Fallback'}</p>
             <p><strong>Destination Source:</strong> {destination ? 'User Selected' : 'Default Fallback'}</p>
-            <p><strong>Pickup:</strong> {finalPickup.address} ({finalPickup.latitude}, {finalPickup.longitude})</p>
+            <p><strong>Pickup:</strong> {actualFinalPickup.address} ({actualFinalPickup.latitude}, {actualFinalPickup.longitude})</p>
             <p><strong>Destination:</strong> {finalDestination.address} ({finalDestination.latitude}, {finalDestination.longitude})</p>
             <p><strong>Estimated Distance:</strong> {estimatedDistance.toFixed(2)} km</p>
             <p><strong>Route Info:</strong> {routeInfo ? `${routeInfo.distance} • ${routeInfo.duration}` : 'Not available'}</p>

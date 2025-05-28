@@ -3,12 +3,14 @@ import { useAppDispatch, useAppSelector } from '../redux/store';
 import { useNavigate } from 'react-router-dom';
 import { COLORS, STYLES } from '../styles/theme';
 import { createRide } from '../redux/slices/rideSlice';
+import { getCurrentLocation, setPickup } from '../redux/slices/locationSlice';
+import locationService from '../services/locationService';
 import socketService from '../services/socketService';
 
 const RideConfirmationScreen: React.FC = () => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { pickup, destination } = useAppSelector((state) => state.location);
+  const { pickup, destination, currentLocation } = useAppSelector((state) => state.location);
   const { user } = useAppSelector((state) => state.auth);
   const { loading } = useAppSelector((state) => state.ride);
 
@@ -44,6 +46,7 @@ const RideConfirmationScreen: React.FC = () => {
 
   console.log('RideConfirmationScreen - original pickup:', pickup);
   console.log('RideConfirmationScreen - original destination:', destination);
+  console.log('RideConfirmationScreen - currentLocation:', currentLocation);
   console.log('RideConfirmationScreen - validated pickup:', finalPickup);
   console.log('RideConfirmationScreen - validated destination:', finalDestination);
 
@@ -52,6 +55,43 @@ const RideConfirmationScreen: React.FC = () => {
   const [showFareBreakdown, setShowFareBreakdown] = useState(false);
   const [isBooking, setIsBooking] = useState(false);
   const [timeoutRef, setTimeoutRef] = useState<NodeJS.Timeout | null>(null);
+  const [isGettingCurrentLocation, setIsGettingCurrentLocation] = useState(false);
+  const [currentLocationPickup, setCurrentLocationPickup] = useState<any>(null);
+
+  // Auto-get current location if pickup is not available
+  useEffect(() => {
+    const shouldGetCurrentLocation = !pickup && !currentLocation;
+    
+    if (shouldGetCurrentLocation && !isGettingCurrentLocation) {
+      console.log('RideConfirmationScreen - No pickup location found, getting current location...');
+      setIsGettingCurrentLocation(true);
+      
+      // Try to get current location
+      locationService.getCurrentLocation()
+        .then((currentLoc) => {
+          console.log('RideConfirmationScreen - Got current location:', currentLoc);
+          setCurrentLocationPickup(currentLoc);
+          // Also update Redux store
+          dispatch(setPickup(currentLoc));
+          setIsGettingCurrentLocation(false);
+        })
+        .catch((error) => {
+          console.error('RideConfirmationScreen - Failed to get current location:', error);
+          setIsGettingCurrentLocation(false);
+          // Fallback to default pickup
+          setCurrentLocationPickup(DEFAULT_PICKUP);
+        });
+    } else if (currentLocation && !pickup) {
+      // Use existing current location from Redux
+      console.log('RideConfirmationScreen - Using existing current location as pickup');
+      setCurrentLocationPickup(currentLocation);
+      dispatch(setPickup(currentLocation));
+    }
+  }, [pickup, currentLocation, dispatch, isGettingCurrentLocation]);
+
+  // Update finalPickup to use current location if available
+  const actualPickup = pickup || currentLocationPickup || finalPickup;
+  const actualFinalPickup = validateLocation(actualPickup, DEFAULT_PICKUP);
 
   const rideTypes = [
     {
@@ -197,7 +237,7 @@ const RideConfirmationScreen: React.FC = () => {
       console.log('[RideConfirmationScreen] === PASSENGER RIDE REQUEST START ===');
       console.log('[RideConfirmationScreen] User:', user);
       console.log('[RideConfirmationScreen] User ID:', userId);
-      console.log('[RideConfirmationScreen] Pickup:', finalPickup);
+      console.log('[RideConfirmationScreen] Pickup:', actualFinalPickup);
       console.log('[RideConfirmationScreen] Destination:', finalDestination);
       console.log('[RideConfirmationScreen] Selected ride type:', selectedRideType);
       console.log('[RideConfirmationScreen] Payment method:', paymentMethod);
@@ -216,10 +256,10 @@ const RideConfirmationScreen: React.FC = () => {
       }
 
       // Calculate estimated distance (simple calculation for demo)
-      const estimatedDistance = calculateDistanceFromCoordinates(finalPickup, finalDestination);
+      const estimatedDistance = calculateDistanceFromCoordinates(actualFinalPickup, finalDestination);
       
       // Ensure we have valid locations for booking (double-check validation)
-      const bookingPickup = validateLocation(finalPickup, DEFAULT_PICKUP);
+      const bookingPickup = validateLocation(actualFinalPickup, DEFAULT_PICKUP);
       const bookingDestination = validateLocation(finalDestination, DEFAULT_DESTINATION);
       
       const rideData = {
@@ -360,7 +400,7 @@ const RideConfirmationScreen: React.FC = () => {
               <div>
                 <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>From</div>
                 <div style={{ fontWeight: '500', color: COLORS.text }}>
-                  {finalPickup.address}
+                  {actualFinalPickup.address}
                 </div>
               </div>
             </div>
