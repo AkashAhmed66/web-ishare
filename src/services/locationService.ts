@@ -55,9 +55,100 @@ const getCurrentPosition = (): Promise<GeolocationPosition> => {
   });
 };
 
-// getCurrentLocation: Gets current location with address using GoMaps API
+// WiFi Access Point interface for GoMaps geolocation
+interface WiFiAccessPoint {
+  macAddress: string;
+  signalStrength: number;
+  signalToNoiseRatio: number;
+}
+
+// GoMaps Geolocation API using WiFi access points
+const getLocationWithGoMapsGeolocation = async (wifiAccessPoints?: WiFiAccessPoint[]): Promise<Location> => {
+  try {
+    const apiKey = 'AlzaSyDeCaO-i9cEU6J3ykY_Uqa9gis2Kzqjo4n';
+    const apiUrl = `https://www.gomaps.pro/geolocation/v1/geolocate?key=${apiKey}`;
+    
+    // Default WiFi access points for demo/fallback
+    const defaultWifiPoints: WiFiAccessPoint[] = [
+      {
+        macAddress: "84:d4:7e:09:a5:f1",
+        signalStrength: -43,
+        signalToNoiseRatio: 0
+      },
+      {
+        macAddress: "44:48:c1:a6:f3:d0", 
+        signalStrength: -55,
+        signalToNoiseRatio: 0
+      }
+    ];
+    
+    const requestBody = {
+      considerIp: "false",
+      wifiAccessPoints: wifiAccessPoints || defaultWifiPoints
+    };
+    
+    console.log('GoMaps Geolocation API URL:', apiUrl);
+    console.log('GoMaps Geolocation Request:', requestBody);
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'IShare-RideApp/1.0',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log('GoMaps Geolocation Response:', data);
+    
+    if (data && data.location && data.location.lat && data.location.lng) {
+      const { lat: latitude, lng: longitude } = data.location;
+      
+      // Get address for the coordinates
+      try {
+        const address = await reverseGeocodeWithGoMaps(latitude, longitude);
+        return {
+          latitude,
+          longitude,
+          address
+        };
+      } catch (reverseError) {
+        console.warn('Failed to get address for geolocation result:', reverseError);
+        return {
+          latitude,
+          longitude,
+          address: `Location: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+        };
+      }
+    }
+    
+    throw new Error('Invalid geolocation response from GoMaps API');
+  } catch (error) {
+    console.error('GoMaps geolocation failed:', error);
+    throw error;
+  }
+};
+
+// Enhanced getCurrentLocation with multiple location sources
 const getCurrentLocation = async (): Promise<Location> => {
   try {
+    // Method 1: Try GoMaps geolocation first (more accurate in urban areas)
+    try {
+      console.log('Attempting GoMaps geolocation...');
+      const goMapsLocation = await getLocationWithGoMapsGeolocation();
+      console.log('GoMaps geolocation successful:', goMapsLocation);
+      return goMapsLocation;
+    } catch (goMapsError) {
+      console.warn('GoMaps geolocation failed, falling back to browser geolocation:', goMapsError);
+    }
+    
+    // Method 2: Fallback to browser geolocation
     const position = await getCurrentPosition();
     const { latitude, longitude } = position.coords;
     
@@ -543,10 +634,31 @@ const savePlaceByUser = async (place: Location, label: string): Promise<Location
   }
 };
 
+// Get a nearby location for second marker (using GoMaps geolocation)
+const getNearbyLocation = async (): Promise<Location> => {
+  try {
+    // Try to get a nearby location using GoMaps geolocation
+    const nearbyLocation = await getLocationWithGoMapsGeolocation();
+    console.log('Got nearby location:', nearbyLocation);
+    return nearbyLocation;
+  } catch (error) {
+    console.error('Failed to get nearby location:', error);
+    
+    // Fallback: Return a location slightly offset from default Dhaka coordinates
+    return {
+      latitude: 23.7808,
+      longitude: 90.4079,
+      address: 'Nearby Location, Dhaka'
+    };
+  }
+};
+
 // Location service object with all functions
 export const locationService = {
   getCurrentPosition,
   getCurrentLocation,
+  getLocationWithGoMapsGeolocation,
+  getNearbyLocation,
   geocode,
   reverseGeocode,
   searchPlaces,

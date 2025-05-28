@@ -5,13 +5,14 @@ import { API_ENDPOINTS } from '../../config/apiConfig';
 // Notification interface
 export interface Notification {
   id: string;
-  userId: string;
+  userId?: string;
   title: string;
-  message: string;
+  body: string;
   read: boolean;
   type: string;
   createdAt: string;
-  metadata?: Record<string, any>;
+  relatedId?: string;
+  data?: Record<string, any>;
 }
 
 // Define the state
@@ -35,7 +36,8 @@ export const getNotifications = createAsyncThunk(
   'notification/getNotifications',
   async (_, { rejectWithValue }) => {
     try {
-      return await apiService.get<Notification[]>(API_ENDPOINTS.GET_NOTIFICATIONS);
+      const response = await apiService.get<{ success: boolean; notifications: Notification[] }>(API_ENDPOINTS.GET_NOTIFICATIONS);
+      return response.notifications; // Extract notifications array from the response
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.message || 'Failed to get notifications');
     }
@@ -94,7 +96,8 @@ export const getUnreadCount = createAsyncThunk(
   'notification/getUnreadCount',
   async (_, { rejectWithValue }) => {
     try {
-      return await apiService.get<{ count: number }>(API_ENDPOINTS.NOTIFICATION_UNREAD_COUNT);
+      const response = await apiService.get<{ success: boolean; count: number }>(API_ENDPOINTS.NOTIFICATION_UNREAD_COUNT);
+      return response; // Return the whole response since the reducer expects { count: number }
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.message || 'Failed to get unread count');
     }
@@ -107,9 +110,14 @@ const notificationSlice = createSlice({
   initialState,
   reducers: {
     addNotification: (state, action: PayloadAction<Notification>) => {
-      state.notifications.unshift(action.payload);
-      if (!action.payload.read) {
-        state.unreadCount += 1;
+      // Validate that the payload is a valid notification object
+      if (action.payload && typeof action.payload === 'object' && action.payload.id) {
+        state.notifications.unshift(action.payload);
+        if (!action.payload.read) {
+          state.unreadCount += 1;
+        }
+      } else {
+        console.error('Invalid notification payload:', action.payload);
       }
     },
     resetNotificationError: (state) => {
@@ -125,8 +133,15 @@ const notificationSlice = createSlice({
       })
       .addCase(getNotifications.fulfilled, (state, action) => {
         state.loading = false;
-        state.notifications = action.payload;
-        state.unreadCount = action.payload.filter((notification) => !notification.read).length;
+        // Ensure action.payload is an array before setting notifications
+        if (Array.isArray(action.payload)) {
+          state.notifications = action.payload;
+          state.unreadCount = action.payload.filter((notification) => !notification.read).length;
+        } else {
+          console.error('Invalid notifications payload:', action.payload);
+          state.notifications = [];
+          state.unreadCount = 0;
+        }
       })
       .addCase(getNotifications.rejected, (state, action) => {
         state.loading = false;

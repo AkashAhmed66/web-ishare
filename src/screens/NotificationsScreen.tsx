@@ -125,7 +125,7 @@ const NotificationsScreen: React.FC = () => {
                 margin: '0 0 0.5rem 0', 
                 fontSize: '0.9rem' 
               }}>
-                {notification.message}
+                {notification.body}
               </p>
               
               <div style={{

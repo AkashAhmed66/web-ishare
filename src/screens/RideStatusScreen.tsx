@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppSelector } from '../redux/store';
 import { COLORS, STYLES } from '../styles/theme';
@@ -44,18 +44,110 @@ const RideStatusScreen: React.FC = () => {
   const [rideProgress, setRideProgress] = useState<RideProgress | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [isCanceling, setIsCanceling] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<any>({});
+
+  // Predefined cancellation reasons
+  const cancelReasons = [
+    'Changed my mind',
+    'Found alternative transport',
+    'Emergency came up',
+    'Driver taking too long',
+    'Incorrect pickup location',
+    'Price too high',
+    'Other'
+  ];
+
+  // Manual initialization function
+  const initializeRideProgress = useCallback(() => {
+    console.log('[RideStatusScreen] Manual initialization triggered');
+    
+    const debug: any = {
+      rideId,
+      userId: user?.id,
+      activeRide: activeRide,
+      socketConnected: socketService.isConnected()
+    };
+
+    // Try localStorage first
+    try {
+      const rideBookingData = localStorage.getItem('rideBookingData');
+      debug.localStorage = rideBookingData ? JSON.parse(rideBookingData) : null;
+      
+      if (rideBookingData) {
+        const bookingData = JSON.parse(rideBookingData);
+        console.log('[RideStatusScreen] Using localStorage data:', bookingData);
+        
+        setRideProgress({
+          rideId: rideId || 'unknown',
+          status: 'searching',
+          estimatedPrice: bookingData.estimatedPrice || 0,
+          pickupLocation: bookingData.pickup || { address: 'Unknown pickup' },
+          dropoffLocation: bookingData.destination || bookingData.dropoffLocation || { address: 'Unknown destination' }
+        });
+        setIsLoading(false);
+        setDebugInfo(debug);
+        return;
+      }
+    } catch (error) {
+      console.error('[RideStatusScreen] localStorage error:', error);
+      debug.localStorageError = error instanceof Error ? error.message : String(error);
+    }
+
+    // Try activeRide from Redux
+    if (activeRide) {
+      console.log('[RideStatusScreen] Using activeRide data:', activeRide);
+      
+      setRideProgress({
+        rideId: activeRide.id || rideId || 'unknown',
+        status: (activeRide.status as any) || 'searching',
+        estimatedPrice: activeRide.fare || 0,
+        pickupLocation: activeRide.pickup || { address: 'Unknown pickup' },
+        dropoffLocation: activeRide.destination || { address: 'Unknown destination' }
+      });
+      setIsLoading(false);
+      setDebugInfo(debug);
+      return;
+    }
+
+    // Fallback - create minimal ride progress
+    console.log('[RideStatusScreen] Using fallback data');
+    setRideProgress({
+      rideId: rideId || 'unknown',
+      status: 'searching',
+      estimatedPrice: 0,
+      pickupLocation: { address: 'Searching for pickup location...' },
+      dropoffLocation: { address: 'Searching for destination...' }
+    });
+    setIsLoading(false);
+    setDebugInfo(debug);
+    
+  }, [rideId, user, activeRide]);
 
   // Setup socket listeners for real-time updates
   useEffect(() => {
     if (!user || !rideId) return;
 
+    console.log('[RideStatusScreen] Initializing with:', { userId: user.id, rideId });
+
     // Initialize socket connection
     socketService.connect(user.id);
+
+    // Use manual initialization
+    initializeRideProgress();
 
     // Listen for ride status updates
     const unsubscribeRideRequestReceived = socketService.on('ride_request_received', (data: any) => {
       console.log('Ride request received:', data);
-      setRideProgress(prev => prev ? { ...prev, ...data } : null);
+      setRideProgress(prev => prev ? { ...prev, ...data } : {
+        rideId: rideId,
+        status: 'searching',
+        estimatedPrice: data.estimatedPrice || 0,
+        pickupLocation: data.pickupLocation,
+        dropoffLocation: data.dropoffLocation,
+        ...data
+      });
       setIsLoading(false);
     });
 
@@ -125,18 +217,6 @@ const RideStatusScreen: React.FC = () => {
       } : prev);
     });
 
-    // Initialize ride progress if activeRide exists
-    if (activeRide && activeRide.id === rideId) {
-      setRideProgress({
-        rideId: activeRide.id,
-        status: activeRide.status as any,
-        estimatedPrice: activeRide.fare || 0,
-        pickupLocation: activeRide.pickup,
-        dropoffLocation: activeRide.destination
-      });
-      setIsLoading(false);
-    }
-
     // Cleanup
     return () => {
       unsubscribeRideRequestReceived();
@@ -148,15 +228,62 @@ const RideStatusScreen: React.FC = () => {
       unsubscribeRideCancelled();
       unsubscribeDriverLocationUpdate();
     };
-  }, [user, rideId, activeRide]);
+  }, [user, rideId, initializeRideProgress]);
+
+  // Add effect to handle activeRide updates
+  useEffect(() => {
+    if (activeRide && !rideProgress) {
+      console.log('[RideStatusScreen] ActiveRide updated, reinitializing...');
+      initializeRideProgress();
+    }
+  }, [activeRide, rideProgress, initializeRideProgress]);
 
   // Handle ride cancellation
-  const handleCancelRide = () => {
-    if (!rideId) return;
+  const handleCancelRide = async () => {
+    if (!rideId || !cancelReason) {
+      alert('Please select a cancellation reason');
+      return;
+    }
     
-    socketService.cancelRide(rideId);
-    setShowCancelModal(false);
-    navigate('/');
+    setIsCanceling(true);
+    
+    try {
+      console.log(`[RideStatusScreen] Cancelling ride ${rideId} with reason: ${cancelReason}`);
+      
+      // Cancel ride via socket
+      socketService.cancelRide(rideId, cancelReason);
+      
+      // Update local state optimistically
+      setRideProgress(prev => prev ? {
+        ...prev,
+        status: 'cancelled'
+      } : null);
+      
+      setShowCancelModal(false);
+      setIsCanceling(false);
+      
+      // Show success message
+      alert('Ride cancelled successfully');
+      
+      // Navigate back to home after a short delay
+      setTimeout(() => {
+        navigate('/');
+      }, 2000);
+      
+    } catch (error) {
+      console.error('Failed to cancel ride:', error);
+      setIsCanceling(false);
+      alert('Failed to cancel ride. Please try again.');
+    }
+  };
+
+  // Check if cancellation is allowed based on ride status
+  const canCancelRide = () => {
+    if (!rideProgress) return false;
+    
+    // Allow cancellation for these statuses
+    const cancellableStatuses = ['searching', 'driverAssigned', 'driverAccepted'];
+    return cancellableStatuses.includes(rideProgress.status);
   };
 
   // Get status info based on current status
@@ -425,10 +552,84 @@ const RideStatusScreen: React.FC = () => {
     return (
       <div style={styles.container}>
         <div style={styles.card}>
+          <div style={styles.header}>
+            <button style={styles.backButton} onClick={() => navigate('/')}>
+              ←
+            </button>
+            <h1 style={styles.title}>Ride Status</h1>
+          </div>
+          
           <div style={styles.statusSection}>
             <div style={styles.statusIcon}>⏳</div>
             <div style={styles.statusTitle}>Loading Ride Status...</div>
             <div style={styles.statusDescription}>Please wait while we fetch your ride details</div>
+            
+            {/* Debug info */}
+            <div style={{ 
+              fontSize: '0.8rem', 
+              color: COLORS.textSecondary, 
+              marginTop: '1rem',
+              textAlign: 'left' as const,
+              backgroundColor: COLORS.background,
+              padding: '0.5rem',
+              borderRadius: '4px'
+            }}>
+              <div><strong>Debug Information:</strong></div>
+              <div>Ride ID: {rideId || 'Missing'}</div>
+              <div>User ID: {user?.id || 'Missing'}</div>
+              <div>Socket Connected: {socketService.isConnected() ? '✅' : '❌'}</div>
+              <div>Active Ride: {activeRide?.id || 'None'}</div>
+              <div>localStorage: {localStorage.getItem('rideBookingData') ? '✅ Found' : '❌ Missing'}</div>
+              {debugInfo.localStorageError && (
+                <div style={{ color: '#dc3545' }}>Error: {debugInfo.localStorageError}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Action buttons for loading state */}
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+            <button
+              style={{
+                ...styles.button,
+                ...styles.secondaryButton
+              }}
+              onClick={() => {
+                console.log('[RideStatusScreen] Manual retry triggered');
+                setIsLoading(true);
+                initializeRideProgress();
+              }}
+            >
+              🔄 Retry
+            </button>
+            
+            <button
+              style={{
+                ...styles.button,
+                ...styles.primaryButton
+              }}
+              onClick={() => {
+                console.log('[RideStatusScreen] Force initialization');
+                initializeRideProgress();
+              }}
+            >
+              📋 Show Details
+            </button>
+            
+            <button
+              style={{
+                ...styles.button,
+                ...styles.dangerButton
+              }}
+              onClick={() => {
+                // Cancel and go back to home
+                if (rideId) {
+                  socketService.cancelRide(rideId, 'Loading timeout - cancelled by user');
+                }
+                navigate('/');
+              }}
+            >
+              ❌ Cancel & Go Back
+            </button>
           </div>
         </div>
       </div>
@@ -501,32 +702,56 @@ const RideStatusScreen: React.FC = () => {
             <span style={styles.infoLabel}>Ride ID</span>
             <span style={styles.infoValue}>{rideProgress.rideId}</span>
           </div>
-          {rideProgress.pickupLocation && (
-            <div style={styles.infoRow}>
-              <span style={styles.infoLabel}>From</span>
-              <span style={styles.infoValue}>{rideProgress.pickupLocation.address}</span>
-            </div>
-          )}
-          {rideProgress.dropoffLocation && (
-            <div style={styles.infoRow}>
-              <span style={styles.infoLabel}>To</span>
-              <span style={styles.infoValue}>{rideProgress.dropoffLocation.address}</span>
-            </div>
-          )}
+          
+          <div style={styles.infoRow}>
+            <span style={styles.infoLabel}>From</span>
+            <span style={styles.infoValue}>
+              {rideProgress.pickupLocation?.address || 'Pickup location not available'}
+            </span>
+          </div>
+          
+          <div style={styles.infoRow}>
+            <span style={styles.infoLabel}>To</span>
+            <span style={styles.infoValue}>
+              {rideProgress.dropoffLocation?.address || 'Destination not available'}
+            </span>
+          </div>
+          
           <div style={styles.infoRow}>
             <span style={styles.infoLabel}>Estimated Price</span>
-            <span style={styles.infoValue}>৳{rideProgress.estimatedPrice}</span>
+            <span style={styles.infoValue}>
+              ৳{rideProgress.estimatedPrice || 'Calculating...'}
+            </span>
           </div>
+          
           {rideProgress.actualPrice && (
             <div style={styles.infoRow}>
               <span style={styles.infoLabel}>Final Price</span>
               <span style={styles.infoValue}>৳{rideProgress.actualPrice}</span>
             </div>
           )}
+          
           {rideProgress.estimatedArrival && (
             <div style={styles.infoRow}>
               <span style={styles.infoLabel}>ETA</span>
               <span style={styles.infoValue}>{rideProgress.estimatedArrival}</span>
+            </div>
+          )}
+
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.5rem',
+              backgroundColor: COLORS.background,
+              borderRadius: '4px',
+              fontSize: '0.8rem',
+              color: COLORS.textSecondary
+            }}>
+              <div><strong>Debug Data:</strong></div>
+              <div>Status: {rideProgress.status}</div>
+              <div>Socket: {socketService.isConnected() ? 'Connected' : 'Disconnected'}</div>
+              <div>Data Source: {debugInfo.localStorage ? 'localStorage' : debugInfo.activeRide ? 'Redux' : 'Fallback'}</div>
             </div>
           )}
         </div>
@@ -592,18 +817,46 @@ const RideStatusScreen: React.FC = () => {
 
       {/* Action Buttons */}
       <div style={styles.card}>
-        {rideProgress.status === 'searching' && (
-          <button
-            style={{
-              ...styles.button,
-              ...styles.dangerButton
-            }}
-            onClick={() => setShowCancelModal(true)}
-          >
-            Cancel Ride
-          </button>
+        {/* Cancel button for multiple statuses */}
+        {canCancelRide() && (
+          <div style={{ marginBottom: '1rem' }}>
+            <button
+              style={{
+                ...styles.button,
+                ...styles.dangerButton
+              }}
+              onClick={() => setShowCancelModal(true)}
+              disabled={isCanceling}
+            >
+              {isCanceling ? 'Cancelling...' : '❌ Cancel Ride'}
+            </button>
+            
+            {/* Warning message based on status */}
+            {rideProgress.status === 'driverAssigned' && (
+              <div style={{ 
+                fontSize: '0.8rem', 
+                color: COLORS.textSecondary, 
+                marginTop: '0.5rem',
+                textAlign: 'center' as const
+              }}>
+                ⚠️ A driver has been assigned. Cancelling may result in a fee.
+              </div>
+            )}
+            
+            {rideProgress.status === 'driverAccepted' && (
+              <div style={{ 
+                fontSize: '0.8rem', 
+                color: '#dc3545', 
+                marginTop: '0.5rem',
+                textAlign: 'center' as const
+              }}>
+                ⚠️ Driver is on the way. Cancelling now may result in a cancellation fee.
+              </div>
+            )}
+          </div>
         )}
 
+        {/* Ride completed actions */}
         {rideProgress.status === 'completed' && (
           <div style={styles.actionButtons}>
             <button
@@ -626,34 +879,144 @@ const RideStatusScreen: React.FC = () => {
             </button>
           </div>
         )}
+
+        {/* Emergency contact for active rides */}
+        {(rideProgress.status === 'inProgress' || rideProgress.status === 'driverArrived') && (
+          <div style={styles.actionButtons}>
+            <button
+              style={{
+                ...styles.button,
+                ...styles.secondaryButton
+              }}
+              onClick={() => window.open('tel:999')}
+            >
+              🚨 Emergency Call
+            </button>
+            <button
+              style={{
+                ...styles.button,
+                ...styles.primaryButton
+              }}
+              onClick={() => navigate(`/chat/${rideProgress.rideId}`)}
+            >
+              💬 Contact Support
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Cancel Confirmation Modal */}
+      {/* Enhanced Cancel Confirmation Modal */}
       {showCancelModal && (
         <div style={styles.modal}>
-          <div style={styles.modalContent}>
-            <div style={styles.modalTitle}>Cancel Ride?</div>
+          <div style={{
+            ...styles.modalContent,
+            maxWidth: '450px',
+            maxHeight: '80vh',
+            overflowY: 'auto' as const
+          }}>
+            <div style={styles.modalTitle}>Cancel Ride Request?</div>
+            
+            {/* Status-specific warning */}
+            {rideProgress.status === 'driverAssigned' && (
+              <div style={{
+                ...styles.modalText,
+                color: '#dc3545',
+                fontWeight: 'bold',
+                marginBottom: '1rem'
+              }}>
+                ⚠️ A driver has been assigned to your ride. Cancelling may result in a fee.
+              </div>
+            )}
+            
+            {rideProgress.status === 'driverAccepted' && (
+              <div style={{
+                ...styles.modalText,
+                color: '#dc3545',
+                fontWeight: 'bold',
+                marginBottom: '1rem'
+              }}>
+                ⚠️ Your driver is on the way. Cancelling now will likely result in a cancellation fee.
+              </div>
+            )}
+            
             <div style={styles.modalText}>
-              Are you sure you want to cancel this ride? This action cannot be undone.
+              Please select a reason for cancellation:
             </div>
+            
+            {/* Cancellation reasons */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              {cancelReasons.map((reason, index) => (
+                <label
+                  key={index}
+                  style={{
+                    display: 'block',
+                    marginBottom: '0.5rem',
+                    cursor: 'pointer',
+                    padding: '0.5rem',
+                    borderRadius: '4px',
+                    backgroundColor: cancelReason === reason ? COLORS.primary + '20' : 'transparent',
+                    border: `1px solid ${cancelReason === reason ? COLORS.primary : COLORS.border}`,
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="cancelReason"
+                    value={reason}
+                    checked={cancelReason === reason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  {reason}
+                </label>
+              ))}
+            </div>
+            
+            {/* Custom reason input */}
+            {cancelReason === 'Other' && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                  Please specify:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter your reason..."
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: `1px solid ${COLORS.border}`,
+                    borderRadius: '4px',
+                    fontSize: '1rem'
+                  }}
+                  onChange={(e) => setCancelReason(`Other: ${e.target.value}`)}
+                />
+              </div>
+            )}
+            
             <div style={styles.modalButtons}>
               <button
                 style={{
                   ...styles.button,
                   ...styles.secondaryButton
                 }}
-                onClick={() => setShowCancelModal(false)}
+                onClick={() => {
+                  setShowCancelModal(false);
+                  setCancelReason('');
+                }}
+                disabled={isCanceling}
               >
                 Keep Ride
               </button>
               <button
                 style={{
                   ...styles.button,
-                  ...styles.dangerButton
+                  ...styles.dangerButton,
+                  opacity: cancelReason ? 1 : 0.6
                 }}
                 onClick={handleCancelRide}
+                disabled={!cancelReason || isCanceling}
               >
-                Cancel Ride
+                {isCanceling ? 'Cancelling...' : 'Confirm Cancel'}
               </button>
             </div>
           </div>
